@@ -1,0 +1,15 @@
+[Unit]
+Description=Collage Hermes Gateway
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/service
+EnvironmentFile=/opt/service/.secrets/service.env
+ExecStart=/opt/service/.venv/bin/hermes gateway
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

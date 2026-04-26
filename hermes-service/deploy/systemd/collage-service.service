@@ -1,0 +1,16 @@
+[Unit]
+Description=Collage Service API
+After=network.target collage-hermes.service
+Requires=collage-hermes.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/service
+EnvironmentFile=/opt/service/.secrets/service.env
+ExecStart=/opt/service/.venv/bin/uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8100
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
