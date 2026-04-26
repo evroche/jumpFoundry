@@ -1,12 +1,36 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
+
+export type DrawingPoint = {
+  x: number;
+  y: number;
+};
+
+export type DrawingStroke = {
+  points: DrawingPoint[];
+  brush_size: number;
+  brush_label: string;
+};
+
+export type DrawingVectorData = {
+  canvas_size: number;
+  brush_size: number;
+  brush_label: string;
+  strokes: DrawingStroke[];
+};
+
+export type DrawingViewMode = "draw" | "vector";
 
 type DrawingCanvasProps = {
   onExportReady: (blob: Blob | null) => void;
+  onVectorChange?: (drawing: DrawingVectorData) => void;
+  initialDrawing?: DrawingVectorData | null;
   size?: number;
   brushSize?: number;
   onBrushSizeChange?: (value: number) => void;
   showToolbar?: boolean;
   showActions?: boolean;
+  viewMode?: DrawingViewMode;
+  overlay?: ReactNode;
 };
 
 export type DrawingCanvasHandle = {
@@ -18,34 +42,20 @@ const CANVAS_SIZE = 360;
 
 export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(function DrawingCanvas({
   onExportReady,
+  onVectorChange,
+  initialDrawing = null,
   size = CANVAS_SIZE,
   brushSize = 16,
   onBrushSizeChange,
   showToolbar = true,
   showActions = true,
+  viewMode = "draw",
+  overlay = null,
 }, ref) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
-  const historyRef = useRef<ImageData[]>([]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) {
-      return;
-    }
-
-    const context = canvas.getContext("2d");
-    if (!context) {
-      return;
-    }
-
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, size, size);
-    context.lineCap = "round";
-    context.lineJoin = "round";
-    context.strokeStyle = "#111111";
-    context.lineWidth = brushSize;
-  }, [brushSize, size]);
+  const [strokes, setStrokes] = useState<DrawingStroke[]>(() => initialDrawing?.strokes ?? []);
+  const [currentStroke, setCurrentStroke] = useState<DrawingStroke | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -53,8 +63,29 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
     if (!canvas || !context) {
       return;
     }
-    context.lineWidth = brushSize;
-  }, [brushSize]);
+
+    renderDrawing(context, size, strokes, currentStroke, viewMode);
+  }, [currentStroke, size, strokes, viewMode]);
+
+  useEffect(() => {
+    if (!onVectorChange) {
+      return;
+    }
+    onVectorChange({
+      canvas_size: size,
+      brush_size: brushSize,
+      brush_label: getBrushLabel(brushSize),
+      strokes,
+    });
+  }, [brushSize, onVectorChange, size, strokes]);
+
+  useEffect(() => {
+    if (strokes.length === 0) {
+      onExportReady(null);
+      return;
+    }
+    void exportRasterPreview();
+  }, [strokes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function getPoint(event: React.PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
@@ -71,77 +102,75 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
 
   function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
-    const context = canvas?.getContext("2d");
-    if (!canvas || !context) {
+    if (!canvas) {
       return;
     }
 
     const point = getPoint(event);
-    historyRef.current.push(context.getImageData(0, 0, canvas.width, canvas.height));
-    context.beginPath();
-    context.moveTo(point.x, point.y);
+    setCurrentStroke({
+      points: [point],
+      brush_size: brushSize,
+      brush_label: getBrushLabel(brushSize),
+    });
     setIsDrawing(true);
     canvas.setPointerCapture(event.pointerId);
   }
 
   function handlePointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
-    if (!isDrawing) {
-      return;
-    }
-
-    const canvas = canvasRef.current;
-    const context = canvas?.getContext("2d");
-    if (!canvas || !context) {
+    if (!isDrawing || !currentStroke) {
       return;
     }
 
     const point = getPoint(event);
-    context.lineTo(point.x, point.y);
-    context.stroke();
-  }
-
-  async function exportCanvas() {
-    const canvas = canvasRef.current;
-    if (!canvas) {
-      onExportReady(null);
-      return;
-    }
-
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
-    onExportReady(blob);
+    setCurrentStroke((active) => {
+      if (!active) {
+        return active;
+      }
+      return {
+        ...active,
+        points: [...active.points, point],
+      };
+    });
   }
 
   function stopDrawing(event?: React.PointerEvent<HTMLCanvasElement>) {
     if (event && canvasRef.current?.hasPointerCapture(event.pointerId)) {
       canvasRef.current.releasePointerCapture(event.pointerId);
     }
+
     setIsDrawing(false);
-    void exportCanvas();
+    setCurrentStroke((active) => {
+      if (active && active.points.length > 0) {
+        setStrokes((existing) => [...existing, active]);
+      }
+      return null;
+    });
   }
 
-  function clearCanvas() {
-    const canvas = canvasRef.current;
-    const context = canvas?.getContext("2d");
-    if (!canvas || !context) {
+  async function exportRasterPreview() {
+    const offscreen = document.createElement("canvas");
+    offscreen.width = size;
+    offscreen.height = size;
+    const context = offscreen.getContext("2d");
+    if (!context) {
+      onExportReady(null);
       return;
     }
 
-    context.clearRect(0, 0, size, size);
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, size, size);
-    historyRef.current = [];
+    renderDrawing(context, size, strokes, null, "draw");
+    const blob = await new Promise<Blob | null>((resolve) => offscreen.toBlob(resolve, "image/png"));
+    onExportReady(blob);
+  }
+
+  function clearCanvas() {
+    setStrokes([]);
+    setCurrentStroke(null);
     onExportReady(null);
   }
 
   function undoStroke() {
-    const canvas = canvasRef.current;
-    const context = canvas?.getContext("2d");
-    const previous = historyRef.current.pop();
-    if (!canvas || !context || !previous) {
-      return;
-    }
-    context.putImageData(previous, 0, 0);
-    void exportCanvas();
+    setCurrentStroke(null);
+    setStrokes((existing) => existing.slice(0, -1));
   }
 
   useImperativeHandle(ref, () => ({
@@ -156,16 +185,19 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
           <span>Draw</span>
         </div>
       ) : null}
-      <canvas
-        ref={canvasRef}
-        width={size}
-        height={size}
-        className="drawing-canvas"
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={stopDrawing}
-        onPointerLeave={stopDrawing}
-      />
+      <div className="drawing-canvas-shell">
+        <canvas
+          ref={canvasRef}
+          width={size}
+          height={size}
+          className="drawing-canvas"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={stopDrawing}
+          onPointerLeave={stopDrawing}
+        />
+        {overlay ? <div className="drawing-canvas-overlay">{overlay}</div> : null}
+      </div>
       {showActions ? (
         <div className="canvas-actions">
           <label className="brush-control">
@@ -191,3 +223,87 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
     </div>
   );
 });
+
+function renderDrawing(
+  context: CanvasRenderingContext2D,
+  size: number,
+  strokes: DrawingStroke[],
+  currentStroke: DrawingStroke | null,
+  viewMode: DrawingViewMode,
+) {
+  context.clearRect(0, 0, size, size);
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, size, size);
+
+  const allStrokes = currentStroke ? [...strokes, currentStroke] : strokes;
+  if (viewMode === "vector") {
+    for (const stroke of allStrokes) {
+      drawVectorStroke(context, stroke);
+    }
+    return;
+  }
+
+  for (const stroke of allStrokes) {
+    drawBrushStroke(context, stroke);
+  }
+}
+
+function drawBrushStroke(context: CanvasRenderingContext2D, stroke: DrawingStroke) {
+  if (stroke.points.length === 0) {
+    return;
+  }
+
+  context.strokeStyle = "#111111";
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.lineWidth = stroke.brush_size;
+  context.beginPath();
+  context.moveTo(stroke.points[0].x, stroke.points[0].y);
+
+  if (stroke.points.length === 1) {
+    const point = stroke.points[0];
+    context.arc(point.x, point.y, stroke.brush_size / 2, 0, Math.PI * 2);
+    context.fillStyle = "#111111";
+    context.fill();
+    return;
+  }
+
+  for (const point of stroke.points.slice(1)) {
+    context.lineTo(point.x, point.y);
+  }
+  context.stroke();
+}
+
+function drawVectorStroke(context: CanvasRenderingContext2D, stroke: DrawingStroke) {
+  if (stroke.points.length === 0) {
+    return;
+  }
+
+  context.strokeStyle = "#111111";
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.lineWidth = Math.max(2, stroke.brush_size * 0.18);
+  context.beginPath();
+  context.moveTo(stroke.points[0].x, stroke.points[0].y);
+  for (const point of stroke.points.slice(1)) {
+    context.lineTo(point.x, point.y);
+  }
+  context.stroke();
+
+  context.fillStyle = "#111111";
+  for (const point of stroke.points) {
+    context.beginPath();
+    context.arc(point.x, point.y, 1.75, 0, Math.PI * 2);
+    context.fill();
+  }
+}
+
+function getBrushLabel(brushSize: number): string {
+  if (brushSize >= 28) {
+    return "Large";
+  }
+  if (brushSize >= 16) {
+    return "Medium";
+  }
+  return "Small";
+}

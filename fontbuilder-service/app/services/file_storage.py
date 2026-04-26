@@ -54,6 +54,7 @@ class RunStorage:
                 "instruction": f'Ask whether to continue generating more glyphs after approving "{source_character}".',
                 "source_character": source_character,
                 "target_character": target_character,
+                "skeleton_image_data_url": "",
             },
         )
 
@@ -80,6 +81,8 @@ class RunStorage:
             "instruction": "Start by drawing one letter. We'll use it to generate the rest of the typeface.",
             "source_character": "A",
             "target_character": "B",
+            "skeleton_image_data_url": "",
+            "structural_mode": "stroke-path",
             "correction": "",
             "latest_run_id": "",
             "created_at": datetime.now(UTC).isoformat(),

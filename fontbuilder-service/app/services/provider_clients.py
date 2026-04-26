@@ -135,6 +135,7 @@ def build_generation_prompt(
     target_character: str,
     correction: str = "",
     has_previous_generated_image: bool = False,
+    generation_mode: str = "final",
 ) -> str:
     if has_previous_generated_image:
         prompt = (
@@ -179,6 +180,7 @@ def run_parallel_image_and_analysis(
     image_media_type: str,
     prompt: str,
     previous_generated_image_bytes: bytes | None = None,
+    analyze_reference: bool = True,
 ) -> tuple[tuple[bytes, dict], GlyphAnalysis | None, str]:
     with ThreadPoolExecutor(max_workers=2) as executor:
         image_future: Future[tuple[bytes, dict]] = executor.submit(
@@ -189,19 +191,25 @@ def run_parallel_image_and_analysis(
             previous_generated_image_bytes,
             "image/png",
         )
-        analysis_future: Future[GlyphAnalysis] = executor.submit(
-            hermes.analyze_glyph,
-            image_bytes,
-            image_media_type,
-        )
+        analysis_future: Future[GlyphAnalysis] | None = None
+        if analyze_reference:
+            analysis_future = executor.submit(
+                hermes.analyze_glyph,
+                image_bytes,
+                image_media_type,
+            )
 
         generated = image_future.result()
-        try:
-            analysis = analysis_future.result()
-            suggested_revision = build_suggested_revision(analysis)
-        except Exception:
+        if analysis_future is None:
             analysis = None
             suggested_revision = ""
+        else:
+            try:
+                analysis = analysis_future.result()
+                suggested_revision = build_suggested_revision(analysis)
+            except Exception:
+                analysis = None
+                suggested_revision = ""
 
     return generated, analysis, suggested_revision
 

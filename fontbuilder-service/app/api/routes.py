@@ -7,9 +7,12 @@ from app.schemas.glyph import (
     FontSessionUpdateRequest,
     GlyphBatchResponse,
     GlyphGenerationResponse,
+    SkeletonPreviewRequest,
+    SkeletonPreviewResponse,
 )
 from app.services.file_storage import RunStorage
 from app.services.orchestrator import GenerationOrchestrator
+from app.services.skeleton_renderer import render_skeleton_preview
 
 router = APIRouter()
 orchestrator = GenerationOrchestrator()
@@ -35,6 +38,8 @@ async def create_session(payload: FontSessionCreateRequest) -> FontSessionRespon
         instruction=session.get("instruction", ""),
         source_character=session.get("source_character", "A"),
         target_character=session.get("target_character", "B"),
+        skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
+        structural_mode=session.get("structural_mode", "stroke-path"),
     )
 
 
@@ -52,6 +57,8 @@ async def get_session(session_id: str) -> FontSessionResponse:
         instruction=session.get("instruction", ""),
         source_character=session.get("source_character", "A"),
         target_character=session.get("target_character", "B"),
+        skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
+        structural_mode=session.get("structural_mode", "stroke-path"),
     )
 
 
@@ -69,6 +76,8 @@ async def update_session(session_id: str, payload: FontSessionUpdateRequest) -> 
         instruction=session.get("instruction", ""),
         source_character=session.get("source_character", "A"),
         target_character=session.get("target_character", "B"),
+        skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
+        structural_mode=session.get("structural_mode", "stroke-path"),
     )
 
 
@@ -86,6 +95,8 @@ async def approve_session(session_id: str) -> FontSessionResponse:
         instruction=session.get("instruction", ""),
         source_character=session.get("source_character", "A"),
         target_character=session.get("target_character", "B"),
+        skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
+        structural_mode=session.get("structural_mode", "stroke-path"),
     )
 
 
@@ -103,6 +114,52 @@ async def request_session_edit(session_id: str) -> FontSessionResponse:
         instruction=session.get("instruction", ""),
         source_character=session.get("source_character", "A"),
         target_character=session.get("target_character", "B"),
+        skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
+        structural_mode=session.get("structural_mode", "stroke-path"),
+    )
+
+
+@router.post("/api/v1/skeleton-preview", response_model=SkeletonPreviewResponse)
+async def create_skeleton_preview(payload: SkeletonPreviewRequest) -> SkeletonPreviewResponse:
+    if len(payload.source_character) != 1:
+        raise HTTPException(status_code=400, detail="source_character must be a single character")
+    if len(payload.target_character) != 1:
+        raise HTTPException(status_code=400, detail="target_character must be a single character")
+
+    try:
+        skeleton_image_data_url = render_skeleton_preview(
+            payload.drawing,
+            structural_mode=payload.structural_mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    stroke_count = len(payload.drawing.strokes)
+    point_count = sum(len(stroke.points) for stroke in payload.drawing.strokes)
+    session = storage.update_session(
+        payload.session_id,
+        {
+            "status": "ready",
+            "stage": "draw",
+            "instruction": "Review the structural skeleton before generating the next glyph.",
+            "source_character": payload.source_character.upper(),
+            "target_character": payload.target_character.upper(),
+            "skeleton_image_data_url": skeleton_image_data_url,
+            "structural_mode": payload.structural_mode,
+        },
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return SkeletonPreviewResponse(
+        backend_version=get_backend_version(),
+        session_id=payload.session_id,
+        structural_mode=payload.structural_mode,
+        source_character=payload.source_character.upper(),
+        target_character=payload.target_character.upper(),
+        skeleton_image_data_url=skeleton_image_data_url,
+        stroke_count=stroke_count,
+        point_count=point_count,
     )
 
 
@@ -114,6 +171,8 @@ async def generate_run(
     correction: str = Form(""),
     previous_run_id: str = Form(""),
     session_id: str = Form(""),
+    generation_mode: str = Form("final"),
+    brush_size: int = Form(16),
 ) -> GlyphGenerationResponse:
     if len(source_character) != 1:
         raise HTTPException(status_code=400, detail="source_character must be a single character")
@@ -131,6 +190,8 @@ async def generate_run(
             correction=correction.strip(),
             previous_run_id=previous_run_id.strip(),
             session_id=session_id.strip(),
+            generation_mode=generation_mode.strip() or "final",
+            brush_size=brush_size,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

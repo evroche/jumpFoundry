@@ -11,6 +11,7 @@ from app.services.provider_clients import (
     run_parallel_image_and_analysis,
     write_json,
 )
+from app.services.vectorizer import vectorize_centerline_and_render
 
 
 class GenerationOrchestrator:
@@ -29,6 +30,8 @@ class GenerationOrchestrator:
         correction: str = "",
         previous_run_id: str = "",
         session_id: str = "",
+        generation_mode: str = "final",
+        brush_size: int = 16,
     ) -> GlyphGenerationResponse:
         run_id, run_dir = self.storage.create_run_dir()
 
@@ -41,6 +44,7 @@ class GenerationOrchestrator:
             target_character,
             correction,
             has_previous_generated_image=bool(previous_generated_image_bytes),
+            generation_mode=generation_mode,
         )
         (generated_bytes, provider_response), analysis, suggested_revision = run_parallel_image_and_analysis(
             self.hermes,
@@ -49,6 +53,11 @@ class GenerationOrchestrator:
             reference_media_type,
             prompt,
             previous_generated_image_bytes=previous_generated_image_bytes,
+            analyze_reference=generation_mode != "skeleton",
+        )
+        interpreted_vector_data_url, final_render_data_url = vectorize_centerline_and_render(
+            generated_bytes,
+            brush_size=brush_size,
         )
         debug = [
             DebugEntry(
@@ -60,6 +69,8 @@ class GenerationOrchestrator:
                     "previous_run_id": previous_run_id,
                     "correction": correction,
                     "prompt": prompt,
+                    "generation_mode": generation_mode,
+                    "brush_size": brush_size,
                 },
             )
         ]
@@ -77,6 +88,8 @@ class GenerationOrchestrator:
         analysis_path = run_dir / "kimi" / "analysis.json"
         provider_path = run_dir / "generated" / "provider_response.json"
         generated_path = run_dir / "generated" / f"{target_character.upper()}.png"
+        interpreted_vector_path = run_dir / "vector" / f"{target_character.upper()}_centerline.svg.txt"
+        final_render_path = run_dir / "vector" / f"{target_character.upper()}_final.png.txt"
         manifest_path = run_dir / "manifest.json"
 
         if analysis is not None:
@@ -84,6 +97,8 @@ class GenerationOrchestrator:
         write_json(run_dir / "kimi" / "prompt.json", {"prompt": prompt})
         write_json(provider_path, provider_response)
         self.storage.write_bytes(generated_path, generated_bytes)
+        interpreted_vector_path.write_text(interpreted_vector_data_url, encoding="utf-8")
+        final_render_path.write_text(final_render_data_url, encoding="utf-8")
         write_json(
             manifest_path,
             {
@@ -91,6 +106,8 @@ class GenerationOrchestrator:
                 "reference_image_path": str(reference_path.relative_to(run_dir)),
                 "analysis_path": str(analysis_path.relative_to(run_dir)),
                 "generated_image_path": str(generated_path.relative_to(run_dir)),
+                "interpreted_vector_path": str(interpreted_vector_path.relative_to(run_dir)),
+                "final_render_path": str(final_render_path.relative_to(run_dir)),
                 "source_character": source_character.upper(),
                 "target_character": target_character.upper(),
                 "correction": correction,
@@ -109,6 +126,8 @@ class GenerationOrchestrator:
             correction=correction or suggested_revision,
             suggested_revision=suggested_revision,
             generated_image_data_url=f"data:image/png;base64,{image_base64}",
+            interpreted_vector_data_url=interpreted_vector_data_url,
+            final_render_data_url=final_render_data_url,
             analysis=analysis,
             debug=debug,
         )
@@ -117,11 +136,16 @@ class GenerationOrchestrator:
                 session_id,
                 {
                     "stage": "review",
-                    "instruction": f'Review the generated "{target_character.upper()}" glyph. Regenerate if needed or continue when it feels right.',
+                    "instruction": (
+                        f'Review the generated "{target_character.upper()}" glyph skeleton.'
+                        if generation_mode == "skeleton"
+                        else f'Review the generated "{target_character.upper()}" glyph. Regenerate if needed or continue when it feels right.'
+                    ),
                     "source_character": source_character.upper(),
                     "target_character": target_character.upper(),
                     "correction": correction,
                     "latest_run_id": run_id,
+                    "skeleton_image_data_url": "",
                 },
             )
         return response
@@ -147,6 +171,7 @@ class GenerationOrchestrator:
                     target_character=target_character,
                     correction=correction,
                     previous_run_id=accepted_run_id,
+                    brush_size=16,
                 )
             )
         return GlyphBatchResponse(
