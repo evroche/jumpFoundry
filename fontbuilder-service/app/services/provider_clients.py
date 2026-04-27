@@ -87,11 +87,14 @@ class OpenAIImagesClient:
         image_bytes: bytes,
         image_media_type: str,
         prompt: str,
+        additional_reference_images: list[tuple[bytes, str]] | None = None,
         previous_generated_image_bytes: bytes | None = None,
         previous_generated_image_media_type: str = "image/png",
     ) -> tuple[bytes, dict]:
         data_url = _to_data_url(image_bytes, image_media_type)
         images = [{"image_url": data_url}]
+        for additional_bytes, additional_media_type in additional_reference_images or []:
+            images.append({"image_url": _to_data_url(additional_bytes, additional_media_type)})
         if previous_generated_image_bytes:
             images.append({"image_url": _to_data_url(previous_generated_image_bytes, previous_generated_image_media_type)})
         payload = {
@@ -136,13 +139,41 @@ def build_generation_prompt(
     correction: str = "",
     has_previous_generated_image: bool = False,
     generation_mode: str = "final",
+    additional_source_characters: list[str] | None = None,
 ) -> str:
+    normalized_additional_sources = [character[:1].upper() for character in (additional_source_characters or []) if character]
     if has_previous_generated_image:
         prompt = (
             "A second image is provided showing the previous draft of the target glyph. "
             f'Revise that draft so it loosely represents the character "{target_character.upper()}". '
             "Revise that draft to address the user's requested revisions. "
             f'Prioritize implementing the user\'s revisions, even if it means it looks less like a traditional letter "{target_character.upper()}". '
+            "One isolated glyph only. No words, no extra symbols, no texture, no shadows, no border, no scene."
+        )
+        if correction:
+            prompt += f" User revision: {correction}."
+        return prompt
+
+    if normalized_additional_sources:
+        source_list = [source_character.upper(), *normalized_additional_sources]
+        joined_sources = ", ".join(f'"{character}"' for character in source_list[:-1])
+        if len(source_list) == 2:
+            source_description = f'Two reference images are provided depicting the letter characters "{source_list[0]}" and "{source_list[1]}". '
+        else:
+            source_description = (
+                f"Reference images are provided depicting the letter characters {joined_sources}, "
+                f'and "{source_list[-1]}". '
+            )
+        prompt = (
+            "Your job is to create the next image in the series, based on the reference images provided. "
+            + source_description +
+            f'Your job is to produce a new image that loosely represents the character "{target_character.upper()}". '
+            "The output does not need to follow the rules of font design. "
+            "Use the reference images together to infer the shared style system. "
+            "Retain the line width and its consistency or variability. "
+            "Retain the contour rhythm, slant of the letter, and any decorative appendages. "
+            "Do not smooth the outline into a generic font letter. "
+            f'Prioritize emphasizing the distinctive qualities of the reference drawings even if it means it looks less like a traditional letter "{target_character.upper()}". '
             "One isolated glyph only. No words, no extra symbols, no texture, no shadows, no border, no scene."
         )
         if correction:

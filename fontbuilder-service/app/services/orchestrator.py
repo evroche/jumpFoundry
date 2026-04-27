@@ -5,10 +5,8 @@ from app.core.config import get_backend_version
 from app.schemas.glyph import DebugEntry, GlyphBatchResponse, GlyphGenerationResponse
 from app.services.file_storage import RunStorage
 from app.services.provider_clients import (
-    HermesClient,
     OpenAIImagesClient,
     build_generation_prompt,
-    run_parallel_image_and_analysis,
     write_json,
 )
 from app.services.vectorizer import vectorize_centerline_and_render
@@ -17,7 +15,6 @@ from app.services.vectorizer import vectorize_centerline_and_render
 class GenerationOrchestrator:
     def __init__(self) -> None:
         self.storage = RunStorage()
-        self.hermes = HermesClient()
         self.images = OpenAIImagesClient()
 
     def generate(
@@ -32,6 +29,8 @@ class GenerationOrchestrator:
         session_id: str = "",
         generation_mode: str = "final",
         brush_size: int = 16,
+        additional_reference_images: list[tuple[bytes, str]] | None = None,
+        additional_source_characters: list[str] | None = None,
     ) -> GlyphGenerationResponse:
         run_id, run_dir = self.storage.create_run_dir()
 
@@ -45,16 +44,17 @@ class GenerationOrchestrator:
             correction,
             has_previous_generated_image=bool(previous_generated_image_bytes),
             generation_mode=generation_mode,
+            additional_source_characters=additional_source_characters,
         )
-        (generated_bytes, provider_response), analysis, suggested_revision = run_parallel_image_and_analysis(
-            self.hermes,
-            self.images,
+        generated_bytes, provider_response = self.images.edit_glyph(
             reference_bytes,
             reference_media_type,
             prompt,
+            additional_reference_images=additional_reference_images,
             previous_generated_image_bytes=previous_generated_image_bytes,
-            analyze_reference=generation_mode != "skeleton",
         )
+        analysis = None
+        suggested_revision = ""
         interpreted_vector_data_url, final_render_data_url = vectorize_centerline_and_render(
             generated_bytes,
             brush_size=brush_size,
@@ -71,19 +71,13 @@ class GenerationOrchestrator:
                     "prompt": prompt,
                     "generation_mode": generation_mode,
                     "brush_size": brush_size,
+                    "reference_image_bytes": len(reference_bytes),
+                    "additional_reference_count": len(additional_reference_images or []),
+                    "additional_source_characters": [character.upper() for character in (additional_source_characters or [])],
+                    "has_previous_generated_image": bool(previous_generated_image_bytes),
                 },
             )
         ]
-        if analysis is not None:
-            debug.append(
-                DebugEntry(
-                    step="suggested_revision",
-                    payload={
-                        "style_summary": analysis.style_summary,
-                        "suggested_revision": suggested_revision,
-                    },
-                )
-            )
 
         analysis_path = run_dir / "kimi" / "analysis.json"
         provider_path = run_dir / "generated" / "provider_response.json"
@@ -92,8 +86,6 @@ class GenerationOrchestrator:
         final_render_path = run_dir / "vector" / f"{target_character.upper()}_final.png.txt"
         manifest_path = run_dir / "manifest.json"
 
-        if analysis is not None:
-            write_json(analysis_path, analysis.model_dump())
         write_json(run_dir / "kimi" / "prompt.json", {"prompt": prompt})
         write_json(provider_path, provider_response)
         self.storage.write_bytes(generated_path, generated_bytes)
@@ -111,7 +103,6 @@ class GenerationOrchestrator:
                 "source_character": source_character.upper(),
                 "target_character": target_character.upper(),
                 "correction": correction,
-                "suggested_revision": suggested_revision,
                 "used_previous_generated_image": bool(previous_generated_image_bytes),
                 "previous_run_id": previous_run_id,
             },
@@ -123,12 +114,12 @@ class GenerationOrchestrator:
             backend_version=get_backend_version(),
             source_character=source_character.upper(),
             target_character=target_character.upper(),
-            correction=correction or suggested_revision,
-            suggested_revision=suggested_revision,
+            correction=correction,
+            suggested_revision="",
             generated_image_data_url=f"data:image/png;base64,{image_base64}",
             interpreted_vector_data_url=interpreted_vector_data_url,
             final_render_data_url=final_render_data_url,
-            analysis=analysis,
+            analysis=None,
             debug=debug,
         )
         if session_id:
@@ -139,7 +130,7 @@ class GenerationOrchestrator:
                     "instruction": (
                         f'Review the generated "{target_character.upper()}" glyph skeleton.'
                         if generation_mode == "skeleton"
-                        else f'Review the generated "{target_character.upper()}" glyph. Regenerate if needed or continue when it feels right.'
+                        else f'Review the generated "{target_character.upper()}" glyph. Approve it if it looks right, or choose edit to request changes.'
                     ),
                     "source_character": source_character.upper(),
                     "target_character": target_character.upper(),

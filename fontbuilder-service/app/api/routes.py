@@ -1,4 +1,7 @@
+import io
+
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 
 from app.core.config import get_backend_version
 from app.schemas.glyph import (
@@ -7,10 +10,13 @@ from app.schemas.glyph import (
     FontSessionUpdateRequest,
     GlyphBatchResponse,
     GlyphGenerationResponse,
+    GlyphOutlineExportRequest,
     SkeletonPreviewRequest,
     SkeletonPreviewResponse,
 )
 from app.services.file_storage import RunStorage
+from app.services.font_export import build_partial_ttf
+from app.services.outline_export import build_outline_svg_zip
 from app.services.orchestrator import GenerationOrchestrator
 from app.services.skeleton_renderer import render_skeleton_preview
 
@@ -38,6 +44,8 @@ async def create_session(payload: FontSessionCreateRequest) -> FontSessionRespon
         instruction=session.get("instruction", ""),
         source_character=session.get("source_character", "A"),
         target_character=session.get("target_character", "B"),
+        correction=session.get("correction", ""),
+        latest_run_id=session.get("latest_run_id", ""),
         skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
         structural_mode=session.get("structural_mode", "stroke-path"),
     )
@@ -57,6 +65,8 @@ async def get_session(session_id: str) -> FontSessionResponse:
         instruction=session.get("instruction", ""),
         source_character=session.get("source_character", "A"),
         target_character=session.get("target_character", "B"),
+        correction=session.get("correction", ""),
+        latest_run_id=session.get("latest_run_id", ""),
         skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
         structural_mode=session.get("structural_mode", "stroke-path"),
     )
@@ -76,6 +86,8 @@ async def update_session(session_id: str, payload: FontSessionUpdateRequest) -> 
         instruction=session.get("instruction", ""),
         source_character=session.get("source_character", "A"),
         target_character=session.get("target_character", "B"),
+        correction=session.get("correction", ""),
+        latest_run_id=session.get("latest_run_id", ""),
         skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
         structural_mode=session.get("structural_mode", "stroke-path"),
     )
@@ -95,6 +107,8 @@ async def approve_session(session_id: str) -> FontSessionResponse:
         instruction=session.get("instruction", ""),
         source_character=session.get("source_character", "A"),
         target_character=session.get("target_character", "B"),
+        correction=session.get("correction", ""),
+        latest_run_id=session.get("latest_run_id", ""),
         skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
         structural_mode=session.get("structural_mode", "stroke-path"),
     )
@@ -114,6 +128,8 @@ async def request_session_edit(session_id: str) -> FontSessionResponse:
         instruction=session.get("instruction", ""),
         source_character=session.get("source_character", "A"),
         target_character=session.get("target_character", "B"),
+        correction=session.get("correction", ""),
+        latest_run_id=session.get("latest_run_id", ""),
         skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
         structural_mode=session.get("structural_mode", "stroke-path"),
     )
@@ -166,7 +182,9 @@ async def create_skeleton_preview(payload: SkeletonPreviewRequest) -> SkeletonPr
 @router.post("/api/v1/generate", response_model=GlyphGenerationResponse)
 async def generate_run(
     reference_glyph: UploadFile = File(...),
+    second_reference_glyph: UploadFile | None = File(None),
     source_character: str = Form(...),
+    second_source_character: str = Form(""),
     target_character: str = Form(...),
     correction: str = Form(""),
     previous_run_id: str = Form(""),
@@ -180,6 +198,19 @@ async def generate_run(
         raise HTTPException(status_code=400, detail="target_character must be a single character")
 
     reference_bytes = await reference_glyph.read()
+    additional_reference_images: list[tuple[bytes, str]] = []
+    additional_source_characters: list[str] = []
+    if second_reference_glyph is not None:
+        second_reference_bytes = await second_reference_glyph.read()
+        if second_reference_bytes:
+            additional_reference_images.append(
+                (
+                    second_reference_bytes,
+                    second_reference_glyph.content_type or "image/png",
+                )
+            )
+            if second_source_character.strip():
+                additional_source_characters.append(second_source_character.strip())
     try:
         return orchestrator.generate(
             reference_filename=reference_glyph.filename or "reference_glyph.png",
@@ -192,6 +223,8 @@ async def generate_run(
             session_id=session_id.strip(),
             generation_mode=generation_mode.strip() or "final",
             brush_size=brush_size,
+            additional_reference_images=additional_reference_images,
+            additional_source_characters=additional_source_characters,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -227,3 +260,29 @@ async def generate_many(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/api/v1/export-outline-set")
+async def export_outline_set(payload: GlyphOutlineExportRequest) -> StreamingResponse:
+    if not payload.glyphs:
+        raise HTTPException(status_code=400, detail="glyphs must contain at least one item")
+    archive_bytes = build_outline_svg_zip([item.model_dump() for item in payload.glyphs])
+    filename = f"fontsketch-outline-set-{payload.session_id or 'export'}.zip"
+    return StreamingResponse(
+        io.BytesIO(archive_bytes),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/api/v1/export-partial-font")
+async def export_partial_font(payload: GlyphOutlineExportRequest) -> StreamingResponse:
+    if not payload.glyphs:
+        raise HTTPException(status_code=400, detail="glyphs must contain at least one item")
+    font_bytes = build_partial_ttf([item.model_dump() for item in payload.glyphs])
+    filename = f"fontsketch-partial-{payload.session_id or 'export'}.ttf"
+    return StreamingResponse(
+        io.BytesIO(font_bytes),
+        media_type="font/ttf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

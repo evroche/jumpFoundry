@@ -37,6 +37,16 @@ class GlyphBatchResponse(BaseModel):
     items: list[GlyphGenerationResponse]
 
 
+class GlyphOutlineExportItem(BaseModel):
+    character: str
+    image_data_url: str
+
+
+class GlyphOutlineExportRequest(BaseModel):
+    session_id: str = ""
+    glyphs: list[GlyphOutlineExportItem]
+
+
 StructuralMode = Literal["stroke-path", "contour-outline"]
 
 
@@ -88,9 +98,11 @@ class FontSessionResponse(BaseModel):
     frontend_url: str
     status: str = "ready"
     stage: Literal["draw", "skeleton_preview", "review"] = "draw"
-    instruction: str = "Start by drawing one letter. We'll use it to generate the rest of the typeface."
-    source_character: str = "A"
-    target_character: str = "B"
+    instruction: str = 'We\'ll draw two letters and use this to generate the rest of the typeface.\n\nStart by drawing the letter "E".'
+    source_character: str = "E"
+    target_character: str = "E"
+    correction: str = ""
+    latest_run_id: str = ""
     skeleton_image_data_url: str = ""
     structural_mode: StructuralMode = "stroke-path"
 

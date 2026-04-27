@@ -364,10 +364,12 @@ textarea {
 }
 
 .session-review-edit-button {
+  grid-column: 1;
   justify-self: start;
 }
 
 .session-review-approve-button {
+  grid-column: 3;
   justify-self: end;
 }
 
@@ -380,6 +382,56 @@ textarea {
   color: #444;
   text-align: center;
   padding: 24px;
+}
+
+.session-batch-frame {
+  padding: 0;
+  align-items: stretch;
+}
+
+.session-batch-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  align-content: start;
+  justify-content: start;
+  gap: 0;
+  width: 100%;
+  height: 100%;
+  border-left: 0.5px solid #000;
+  border-top: 0.5px solid #000;
+}
+
+.session-batch-cell {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  padding: 18px;
+  border-right: 0.5px solid #000;
+  border-bottom: 0.5px solid #000;
+  aspect-ratio: 1;
+}
+
+.session-batch-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.session-font-preview-frame {
+  padding: 28px;
+  align-items: stretch;
+}
+
+.session-font-preview-textarea {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  resize: none;
+  outline: none;
+  font-size: clamp(84px, 13vw, 192px);
+  line-height: 1.15;
+  background: transparent;
+  color: #111;
 }
 
 .workspace-grid {
@@ -642,5 +694,9 @@ textarea {
   .session-review-frame {
     width: min(calc(100dvh - 188px), calc(100vw - 48px));
     padding: 0;
+  }
+
+  .session-batch-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 }

@@ -18,6 +18,18 @@ def register(ctx) -> None:
         schema=schemas.START_FONTSKETCH_SESSION,
         handler=tools.start_fontsketch_session,
     )
+    ctx.register_tool(
+        name="get_fontsketch_session_status",
+        toolset="fontsketch",
+        schema=schemas.GET_FONTSKETCH_SESSION_STATUS,
+        handler=tools.get_fontsketch_session_status,
+    )
+    ctx.register_tool(
+        name="submit_fontsketch_revision",
+        toolset="fontsketch",
+        schema=schemas.SUBMIT_FONTSKETCH_REVISION,
+        handler=tools.submit_fontsketch_revision,
+    )
 
     skills_dir = Path(__file__).parent / "skills"
     if skills_dir.exists():

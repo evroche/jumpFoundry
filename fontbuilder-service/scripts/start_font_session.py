@@ -39,7 +39,7 @@ def main() -> int:
     session_url = payload["frontend_url"]
     print(f"Session ID: {payload['session_id']}")
     print(f"Open: {session_url}")
-    print("Start by drawing one letter. We'll use this to generate the rest of the typeface.")
+    print('We\'ll draw two letters and use this to generate the rest of the typeface.\n\nStart by drawing the letter "E".')
 
     if not args.no_open:
         webbrowser.open(session_url)

@@ -11,14 +11,16 @@ import letterUpIcon from "./assets/material-icons/letter-up.svg";
 import sendIcon from "./assets/material-icons/send.svg";
 import undoIcon from "./assets/material-icons/undo.svg";
 import {
+  exportPartialFont,
   fetchSession,
-  requestSessionApprove,
   requestSessionEdit,
   submitSkeletonPreview,
   submitGlyphGeneration,
   submitManyGlyphs,
   updateSession,
+  type AdditionalReferenceInput,
   type BatchResponse,
+  type GlyphOutlineExportItem,
   type RunResponse,
   type SkeletonPreviewResponse,
   type SessionResponse,
@@ -30,13 +32,23 @@ const BRUSH_OPTIONS = [
   { value: 20, label: "Medium" },
   { value: 10, label: "Small" },
 ] as const;
+const FIRST_SEED_CHARACTER = "E";
+const SECOND_SEED_CHARACTER = "S";
+const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+
+type SeedReference = {
+  character: string;
+  blob: Blob;
+  previewUrl: string;
+};
 
 export default function App() {
   const sessionId = readSessionIdFromPath();
+  const previewFontFamily = "FontsketchPreview";
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [sessionError, setSessionError] = useState("");
-  const [sourceCharacter, setSourceCharacter] = useState("A");
-  const [targetCharacter, setTargetCharacter] = useState("B");
+  const [sourceCharacter, setSourceCharacter] = useState(FIRST_SEED_CHARACTER);
+  const [targetCharacter, setTargetCharacter] = useState(FIRST_SEED_CHARACTER);
   const [correction, setCorrection] = useState("");
   const [referenceBlob, setReferenceBlob] = useState<Blob | null>(null);
   const [drawingData, setDrawingData] = useState<DrawingVectorData | null>(null);
@@ -47,6 +59,10 @@ export default function App() {
   const [debugHistory, setDebugHistory] = useState<Array<{ at: string; data: unknown }>>([]);
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [postBatchStage, setPostBatchStage] = useState<"grid" | "preview">("grid");
+  const [previewText, setPreviewText] = useState("the quick brown fox");
+  const [previewFontBlob, setPreviewFontBlob] = useState<Blob | null>(null);
+  const [seedReferences, setSeedReferences] = useState<SeedReference[]>([]);
   const [brushSize, setBrushSize] = useState(16);
   const [drawStageTab, setDrawStageTab] = useState<"draw" | "vector" | "skeleton">("draw");
   const [reviewTab, setReviewTab] = useState<"skeleton" | "vector" | "final">("skeleton");
@@ -54,11 +70,36 @@ export default function App() {
   const [finalRenderImage, setFinalRenderImage] = useState("");
   const [isPreparingReviewArtifacts, setIsPreparingReviewArtifacts] = useState(false);
   const sessionCanvasRef = useRef<DrawingCanvasHandle | null>(null);
-  const isAwaitingApproveFollowup = session?.status === "awaiting_hermes_batch_confirmation";
+  const handledRegenerationRef = useRef("");
   const isAwaitingEditPrompt = session?.status === "awaiting_hermes_edit_prompt";
   const skeletonPreviewImage = skeletonPreview?.skeleton_image_data_url || session?.skeleton_image_data_url || "";
   const strokeCount = drawingData?.strokes.length ?? 0;
   const pointCount = drawingData?.strokes.reduce((count, stroke) => count + stroke.points.length, 0) ?? 0;
+  const batchItems = batchResult && result ? [result, ...batchResult.items] : [];
+  const batchGridItems = ALPHABET.map((character) => {
+    const normalizedCharacter = normalizeLetter(character);
+    const seedReference = seedReferences.find((reference) => normalizeLetter(reference.character) === normalizedCharacter);
+    const generatedItem = batchItems.find((item) => normalizeLetter(item.target_character) === normalizedCharacter);
+    if (seedReference) {
+      return {
+        key: `seed-${normalizedCharacter}`,
+        imageUrl: seedReference.previewUrl,
+        alt: normalizedCharacter,
+      };
+    }
+    if (generatedItem) {
+      return {
+        key: generatedItem.run_id,
+        imageUrl: generatedItem.generated_image_data_url,
+        alt: normalizedCharacter,
+      };
+    }
+    return {
+      key: `empty-${normalizedCharacter}`,
+      imageUrl: "",
+      alt: normalizedCharacter,
+    };
+  });
 
   const drawStageTabs = (
     <div className="session-frame-tabs">
@@ -124,8 +165,8 @@ export default function App() {
           return;
         }
         setSession(nextSession);
-        setSourceCharacter(nextSession.source_character);
-        setTargetCharacter(nextSession.target_character);
+        setSourceCharacter(normalizeLetter(nextSession.source_character || FIRST_SEED_CHARACTER));
+        setTargetCharacter(normalizeLetter(nextSession.target_character || FIRST_SEED_CHARACTER));
         setSkeletonPreview(
           nextSession.skeleton_image_data_url
             ? {
@@ -152,6 +193,26 @@ export default function App() {
 
     return () => {
       isActive = false;
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      void fetchSession(sessionId)
+        .then((nextSession) => {
+          setSession(nextSession);
+        })
+        .catch(() => {
+          // Ignore transient polling errors while the local backend restarts.
+        });
+    }, 1200);
+
+    return () => {
+      window.clearInterval(interval);
     };
   }, [sessionId]);
 
@@ -214,17 +275,57 @@ export default function App() {
     };
   }, [result?.generated_image_data_url, drawingData?.brush_size, drawingData?.canvas_size, brushSize]);
 
+  useEffect(() => {
+    if (
+      !sessionId ||
+      !session ||
+      session.status !== "regenerate_requested" ||
+      !result ||
+      seedReferences.length < 2 ||
+      isSubmitting
+    ) {
+      return;
+    }
+
+    const correctionKey = `${session.latest_run_id ?? ""}:${session.correction ?? ""}`;
+    if (!session.correction || handledRegenerationRef.current === correctionKey) {
+      return;
+    }
+
+    handledRegenerationRef.current = correctionKey;
+    const primarySeed = seedReferences[0];
+    const secondarySeed = seedReferences[1];
+    const brushSizeForRevision = drawingData?.brush_size ?? brushSize;
+
+    void (async () => {
+      setIsSubmitting(true);
+      setErrorMessage("");
+      try {
+        const nextResult = await submitGlyphGeneration(
+          primarySeed.blob,
+          primarySeed.character,
+          result.target_character,
+          session.correction ?? "",
+          result.run_id,
+          sessionId,
+          "final",
+          brushSizeForRevision,
+          [toAdditionalReference(secondarySeed)],
+        );
+        setResult(nextResult);
+        setReviewTab("skeleton");
+        const nextSession = await fetchSession(sessionId);
+        setSession(nextSession);
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "Unknown error");
+      } finally {
+        setIsSubmitting(false);
+      }
+    })();
+  }, [sessionId, session, result, seedReferences, isSubmitting, drawingData?.brush_size, brushSize]);
+
   async function handleGenerate() {
     if (sessionId) {
-      if (drawStageTab !== "skeleton") {
-        const preview = await buildSkeletonPreview(false);
-        if (!preview) {
-          return;
-        }
-        await generateFromReference(preview.skeleton_image_data_url);
-        return;
-      }
-
       await generateFromReference();
       return;
     }
@@ -311,13 +412,58 @@ export default function App() {
       return;
     }
 
+    if (!referenceBlob) {
+      setErrorMessage("Draw a glyph first so the service has a reference image.");
+      return;
+    }
+
+    if (seedReferences.length === 0) {
+      const firstSeedCharacter = normalizeLetter(sourceCharacter || FIRST_SEED_CHARACTER);
+      setSeedReferences([
+        {
+          character: firstSeedCharacter,
+          blob: referenceBlob,
+          previewUrl: URL.createObjectURL(referenceBlob),
+        },
+      ]);
+      setSourceCharacter(SECOND_SEED_CHARACTER);
+      setTargetCharacter(nextAlphabetCharacter(firstSeedCharacter));
+      setSkeletonPreview(null);
+      setSkeletonPreviewSignature("");
+      setDrawStageTab("draw");
+      sessionCanvasRef.current?.clear();
+      await updateSession(sessionId, {
+        source_character: SECOND_SEED_CHARACTER,
+        target_character: nextAlphabetCharacter(firstSeedCharacter),
+        instruction: 'Now draw the letter "S".',
+        skeleton_image_data_url: "",
+        status: "ready",
+        stage: "draw",
+      });
+      return;
+    }
+
     setIsSubmitting(true);
     setErrorMessage("");
 
     try {
-      const effectiveTargetCharacter = nextAlphabetCharacter(sourceCharacter);
-      const referenceForGeneration = referenceBlob
-        ? referenceBlob
+      await updateSession(sessionId, {
+        status: "generating_single",
+        instruction: `Generating the letter "${nextAlphabetCharacter(seedReferences[0]?.character ?? sourceCharacter)}" now. Wait for the review screen to load.`,
+      });
+      const primarySeed = seedReferences[0];
+      const secondSeed: SeedReference = seedReferences[1] ?? {
+        character: normalizeLetter(sourceCharacter || SECOND_SEED_CHARACTER),
+        blob: referenceBlob,
+        previewUrl: URL.createObjectURL(referenceBlob),
+      };
+      const nextSeedReferences = seedReferences[1] ? seedReferences : [primarySeed, secondSeed];
+      if (!seedReferences[1]) {
+        setSeedReferences(nextSeedReferences);
+      }
+      const effectiveTargetCharacter = nextAlphabetCharacter(primarySeed.character);
+      const referenceForGeneration = primarySeed?.blob
+        ? primarySeed.blob
         : previewImage
           ? await rasterizeDataUrlToPngBlob(previewImage, 1024)
           : null;
@@ -329,15 +475,17 @@ export default function App() {
 
       const nextResult = await submitGlyphGeneration(
         referenceForGeneration,
-        sourceCharacter,
+        primarySeed.character,
         effectiveTargetCharacter,
         correction,
         result?.run_id ?? "",
         sessionId,
         "final",
         drawingData?.brush_size ?? brushSize,
+        [toAdditionalReference(nextSeedReferences[1])],
       );
-      setTargetCharacter(effectiveTargetCharacter);
+        setSourceCharacter(primarySeed.character);
+        setTargetCharacter(effectiveTargetCharacter);
       setResult(nextResult);
       setReviewTab("skeleton");
       setBatchResult(null);
@@ -392,7 +540,8 @@ export default function App() {
   }
 
   async function handleApprove() {
-    if (!sessionId) {
+    if (!sessionId || seedReferences.length < 2 || !result) {
+      setErrorMessage("Generate and approve one glyph first.");
       return;
     }
 
@@ -400,7 +549,52 @@ export default function App() {
     setErrorMessage("");
 
     try {
-      const nextSession = await requestSessionApprove(sessionId);
+      const approvedCharacter = result.target_character;
+      const nextTargets = nextAlphabetCharacters(approvedCharacter, 3);
+      const items: RunResponse[] = [];
+      const primarySeed = seedReferences[0];
+      const secondarySeed = seedReferences[1];
+      await updateSession(sessionId, {
+        status: "generating_batch",
+        instruction: `Generating the next letters ${nextTargets.join(", ")} now. Wait for the board to load.`,
+      });
+
+      for (const nextTarget of nextTargets) {
+        const nextItem = await submitGlyphGeneration(
+          primarySeed.blob,
+          primarySeed.character,
+          nextTarget,
+          "",
+          "",
+          "",
+          "final",
+          drawingData?.brush_size ?? brushSize,
+          [toAdditionalReference(secondarySeed)],
+        );
+        items.push(nextItem);
+      }
+
+      const nextBatch: BatchResponse = {
+        backend_version: items[0]?.backend_version ?? result.backend_version,
+        source_character: approvedCharacter,
+        target_characters: nextTargets,
+        accepted_run_id: "",
+        items,
+      };
+      setPostBatchStage("grid");
+      setPreviewFontBlob(null);
+      const nextSession = await updateSession(sessionId, {
+        source_character: approvedCharacter,
+        target_character: nextTargets[0] ?? nextAlphabetCharacter(approvedCharacter),
+        status: "ready",
+        stage: "review",
+        instruction: `Review the generated letters ${nextTargets.join(", ")} on the board, then continue to the font preview when you're ready.`,
+      });
+      setBatchResult(nextBatch);
+      setDebugHistory((current) => [
+        { at: new Date().toISOString(), data: nextBatch.items.map((item) => item.debug) },
+        ...current,
+      ].slice(0, 12));
       setSession(nextSession);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Unknown error");
@@ -425,7 +619,7 @@ export default function App() {
   }
 
   async function handleGenerateMore() {
-    if (!referenceBlob || !result) {
+    if (seedReferences.length < 2 || !result) {
       setErrorMessage("Generate and keep one accepted glyph first.");
       return;
     }
@@ -434,7 +628,7 @@ export default function App() {
     setErrorMessage("");
 
     try {
-      const nextBatch = await submitManyGlyphs(referenceBlob, sourceCharacter, ["C", "D", "E", "F", "G", "H"], result.run_id, correction);
+      const nextBatch = await submitManyGlyphs(seedReferences[0].blob, seedReferences[0].character, ["C", "D", "E", "F", "G", "H"], result.run_id, correction);
       setBatchResult(nextBatch);
       setDebugHistory((current) => [
         { at: new Date().toISOString(), data: nextBatch.items.map((item) => item.debug) },
@@ -447,18 +641,120 @@ export default function App() {
     }
   }
 
+  async function handleExportPartialFont() {
+    if (!sessionId || seedReferences.length < 2 || !result || !batchResult) {
+      setErrorMessage("Generate the two source letters and the resulting set first so the font export has all glyphs.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorMessage("");
+
+    try {
+      const fontBlob = previewFontBlob ?? await buildPreviewFontBlob(sessionId, seedReferences, result, batchResult);
+      setPreviewFontBlob(fontBlob);
+      downloadBlob(fontBlob, `fontsketch-partial-${sessionId}.ttf`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Unknown error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleOpenFontPreview() {
+    if (!sessionId || seedReferences.length < 2 || !result || !batchResult) {
+      setErrorMessage("Generate the two source letters and the resulting set first so the font preview has all glyphs.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorMessage("");
+
+    try {
+      const fontBlob = previewFontBlob ?? await buildPreviewFontBlob(sessionId, seedReferences, result, batchResult);
+      setPreviewFontBlob(fontBlob);
+      await loadPreviewFont(fontBlob, previewFontFamily);
+      await updateSession(sessionId, {
+        instruction: "Test your font in the preview text area. When it feels right, download the font.",
+        status: "ready",
+        stage: "review",
+      });
+      setPostBatchStage("preview");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Unknown error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   if (sessionId) {
     return (
       <main className="page-shell page-shell-session">
         {sessionError ? <p className="error-text">{sessionError}</p> : null}
         {session ? (
-          isSubmitting || isAwaitingApproveFollowup ? (
+          isSubmitting ? (
             <section className="session-loading-layout">
               <div className="session-loading-dots" aria-label="Loading">
                 <span>.</span>
                 <span>.</span>
                 <span>.</span>
               </div>
+            </section>
+          ) : batchResult ? (
+            <section className="session-review-layout">
+              {postBatchStage === "grid" ? (
+                <>
+                  <section className="session-review-frame session-batch-frame">
+                    <div className="session-batch-grid">
+                      {batchGridItems.map((item) => (
+                        <div key={item.key} className="session-batch-cell">
+                          {item.imageUrl ? (
+                            <img className="session-batch-image" src={item.imageUrl} alt={item.alt} />
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                  <div className="session-review-actions">
+                    <button
+                      type="button"
+                      className="button session-submit-button session-review-approve-button"
+                      onClick={handleOpenFontPreview}
+                      aria-label="Preview Font"
+                      title="Preview Font"
+                    >
+                      <img src={approveIcon} alt="" className="session-submit-icon" />
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <section className="session-review-frame session-font-preview-frame">
+                    <textarea
+                      className="session-font-preview-textarea"
+                      value={previewText}
+                      onChange={(event) => setPreviewText(event.target.value)}
+                      style={{ fontFamily: `"${previewFontFamily}", serif` }}
+                    />
+                  </section>
+                  <div className="session-review-actions">
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={() => setPostBatchStage("grid")}
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      className="button session-submit-button session-review-approve-button"
+                      onClick={handleExportPartialFont}
+                    >
+                      Download Font
+                    </button>
+                  </div>
+                </>
+              )}
             </section>
           ) : session.stage === "review" && result ? (
             <section className="session-review-layout">
@@ -500,7 +796,7 @@ export default function App() {
                     type="button"
                     className="button session-submit-button session-review-approve-button"
                     aria-label="Approve"
-                    title="Approve"
+                    title="Approve and generate next 3"
                     onClick={handleApprove}
                   >
                     <img src={approveIcon} alt="" className="session-submit-icon" />
@@ -713,6 +1009,16 @@ function nextAlphabetCharacter(character: string): string {
   return String.fromCharCode(normalized.charCodeAt(0) + 1);
 }
 
+function nextAlphabetCharacters(character: string, count: number): string[] {
+  const items: string[] = [];
+  let current = character;
+  for (let index = 0; index < count; index += 1) {
+    current = nextAlphabetCharacter(current);
+    items.push(current);
+  }
+  return items;
+}
+
 function previousAlphabetCharacter(character: string): string {
   const normalized = normalizeLetter(character);
   if (normalized < "A" || normalized > "Z") {
@@ -726,7 +1032,7 @@ function previousAlphabetCharacter(character: string): string {
 
 function normalizeLetter(value: string): string {
   const next = value.toUpperCase().slice(0, 1);
-  return next || "A";
+  return next || FIRST_SEED_CHARACTER;
 }
 
 function brushLabelForSize(brushSize: number): string {
@@ -745,6 +1051,81 @@ function dataUrlToBlob(dataUrl: string): Blob {
   const mimeType = mimeMatch?.[1] ?? "application/octet-stream";
   const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
   return new Blob([bytes], { type: mimeType });
+}
+
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = reader.result;
+      if (typeof value === "string") {
+        resolve(value);
+        return;
+      }
+      reject(new Error("Failed to convert blob to data URL"));
+    };
+    reader.onerror = () => reject(new Error("Failed to read blob"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function buildExportGlyphs(
+  seedReferences: SeedReference[],
+  result: RunResponse,
+  batchResult: BatchResponse,
+): Promise<GlyphOutlineExportItem[]> {
+  const normalizedSeeds = await Promise.all(
+    seedReferences.map(async (reference) => ({
+      character: normalizeLetter(reference.character),
+      image_data_url: await blobToDataUrl(reference.blob),
+    })),
+  );
+  return [
+    ...normalizedSeeds,
+    {
+      character: result.target_character,
+      image_data_url: result.generated_image_data_url,
+    },
+    ...batchResult.items.map((item) => ({
+      character: item.target_character,
+      image_data_url: item.generated_image_data_url,
+    })),
+  ];
+}
+
+async function buildPreviewFontBlob(
+  sessionId: string,
+  seedReferences: SeedReference[],
+  result: RunResponse,
+  batchResult: BatchResponse,
+): Promise<Blob> {
+  const glyphs = await buildExportGlyphs(seedReferences, result, batchResult);
+  return exportPartialFont(sessionId, glyphs);
+}
+
+function toAdditionalReference(reference: SeedReference): AdditionalReferenceInput {
+  return {
+    blob: reference.blob,
+    character: normalizeLetter(reference.character),
+  };
+}
+
+async function loadPreviewFont(fontBlob: Blob, familyName: string): Promise<void> {
+  const fontUrl = URL.createObjectURL(fontBlob);
+  const fontFace = new FontFace(familyName, `url(${fontUrl})`);
+  await fontFace.load();
+  document.fonts.add(fontFace);
 }
 
 async function rasterizeDataUrlToPngBlob(dataUrl: string, size: number): Promise<Blob> {

@@ -71,3 +71,47 @@ START_FONTSKETCH_SESSION = {
         "required": [],
     },
 }
+
+
+GET_FONTSKETCH_SESSION_STATUS = {
+    "name": "get_fontsketch_session_status",
+    "description": (
+        "Read the current local Fontsketch session and return the instruction for the user. "
+        "Use when the user asks what to do next in Fontsketch or says they finished a step."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Optional specific Fontsketch session id. If omitted, use the most recently updated local session.",
+                "default": "",
+            },
+        },
+        "required": [],
+    },
+}
+
+
+SUBMIT_FONTSKETCH_REVISION = {
+    "name": "submit_fontsketch_revision",
+    "description": (
+        "Save a revision request for the current Fontsketch glyph review session. "
+        "Use after the user has clicked edit and described what should change."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Optional specific Fontsketch session id. If omitted, use the most recently updated local session.",
+                "default": "",
+            },
+            "correction": {
+                "type": "string",
+                "description": "The user's requested revision for the current glyph.",
+            },
+        },
+        "required": ["correction"],
+    },
+}

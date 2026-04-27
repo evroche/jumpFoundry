@@ -68,7 +68,7 @@ class RunStorage:
             session_id,
             {
                 "status": "awaiting_hermes_edit_prompt",
-                "instruction": f'Ask what should change about the "{target_character}" glyph before revising it.',
+                "instruction": f'Ask what should change about the "{target_character}" glyph before revising it. Once the user tells you, save the revision and regenerate that glyph.',
             },
         )
 
@@ -78,9 +78,9 @@ class RunStorage:
             "session_id": session_id,
             "status": "ready",
             "stage": "draw",
-            "instruction": "Start by drawing one letter. We'll use it to generate the rest of the typeface.",
-            "source_character": "A",
-            "target_character": "B",
+            "instruction": 'We\'ll draw two letters and use this to generate the rest of the typeface.\n\nStart by drawing the letter "E".',
+            "source_character": "E",
+            "target_character": "E",
             "skeleton_image_data_url": "",
             "structural_mode": "stroke-path",
             "correction": "",

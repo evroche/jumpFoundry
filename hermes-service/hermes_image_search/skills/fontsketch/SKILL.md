@@ -17,6 +17,14 @@ Default behavior:
 
 After the tool returns, respond with the returned URL and tell the user:
 
-`Start by drawing one letter. We'll use this to generate the rest of the typeface.`
+`We'll draw two letters and use this to generate the rest of the typeface.`
+
+`Start by drawing the letter "E".`
+
+If the user says they finished a step, asks what to do next, asks for the next instruction, or asks what Hermes wants them to do in Fontsketch, call `get_fontsketch_session_status` and restate the returned instruction clearly.
+
+Use the session instruction as the source of truth for the current stage.
+
+If the user has clicked edit and then tells you what they want changed about the glyph, call `submit_fontsketch_revision` with their requested correction. After the tool returns, tell them the revision has been sent and the glyph is regenerating.
 
 If the tool returns an error, explain that Fontsketch may not be running locally and ask the user to start the local stack.
