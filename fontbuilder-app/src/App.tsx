@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import clearIcon from "./assets/material-icons/clear.svg";
-import approveIcon from "./assets/material-icons/approve.svg";
+import clearIcon from "./assets/material-icons/clearCOMPACT.svg";
+import approveIcon from "./assets/material-icons/approveCOMPACT.svg";
+import backIcon from "./assets/material-icons/back.svg";
+import downloadIcon from "./assets/material-icons/download.svg";
 import {
   DrawingCanvas,
   type DrawingCanvasHandle,
@@ -8,11 +10,13 @@ import {
 } from "./components/DrawingCanvas";
 import letterDownIcon from "./assets/material-icons/letter-down.svg";
 import letterUpIcon from "./assets/material-icons/letter-up.svg";
-import sendIcon from "./assets/material-icons/send.svg";
-import undoIcon from "./assets/material-icons/undo.svg";
+import redoIcon from "./assets/material-icons/redoCOMPACT.svg";
+import undoIcon from "./assets/material-icons/undoCOMPACT.svg";
 import {
   exportPartialFont,
+  fetchRun,
   fetchSession,
+  normalizeGlyphSet,
   requestSessionEdit,
   submitSkeletonPreview,
   submitGlyphGeneration,
@@ -29,8 +33,8 @@ import {
 const SESSION_CANVAS_SIZE = 720;
 const BRUSH_OPTIONS = [
   { value: 32, label: "Large" },
-  { value: 20, label: "Medium" },
-  { value: 10, label: "Small" },
+  { value: 19, label: "Medium" },
+  { value: 11, label: "Small" },
 ] as const;
 const FIRST_SEED_CHARACTER = "E";
 const SECOND_SEED_CHARACTER = "S";
@@ -63,26 +67,44 @@ export default function App() {
   const [previewText, setPreviewText] = useState("the quick brown fox");
   const [previewFontBlob, setPreviewFontBlob] = useState<Blob | null>(null);
   const [seedReferences, setSeedReferences] = useState<SeedReference[]>([]);
+  const [selectedBatchLetters, setSelectedBatchLetters] = useState<string[]>([]);
+  const [normalizedExportGlyphs, setNormalizedExportGlyphs] = useState<GlyphOutlineExportItem[]>([]);
   const [brushSize, setBrushSize] = useState(16);
   const [drawStageTab, setDrawStageTab] = useState<"draw" | "vector" | "skeleton">("draw");
+  const [drawTabsOpen, setDrawTabsOpen] = useState(false);
   const [reviewTab, setReviewTab] = useState<"skeleton" | "vector" | "final">("skeleton");
   const [interpretedVectorImage, setInterpretedVectorImage] = useState("");
   const [finalRenderImage, setFinalRenderImage] = useState("");
   const [isPreparingReviewArtifacts, setIsPreparingReviewArtifacts] = useState(false);
   const sessionCanvasRef = useRef<DrawingCanvasHandle | null>(null);
   const handledRegenerationRef = useRef("");
+  const hydratedRunIdRef = useRef("");
+  const hydratingRunIdRef = useRef("");
   const isAwaitingEditPrompt = session?.status === "awaiting_hermes_edit_prompt";
   const skeletonPreviewImage = skeletonPreview?.skeleton_image_data_url || session?.skeleton_image_data_url || "";
   const strokeCount = drawingData?.strokes.length ?? 0;
   const pointCount = drawingData?.strokes.reduce((count, stroke) => count + stroke.points.length, 0) ?? 0;
   const batchItems = batchResult && result ? [result, ...batchResult.items] : [];
+  const normalizedGlyphMap = new Map(
+    normalizedExportGlyphs.map((glyph) => [normalizeLetter(glyph.character), glyph.image_data_url]),
+  );
   const batchGridItems = ALPHABET.map((character) => {
     const normalizedCharacter = normalizeLetter(character);
+    const normalizedImageUrl = normalizedGlyphMap.get(normalizedCharacter) ?? "";
     const seedReference = seedReferences.find((reference) => normalizeLetter(reference.character) === normalizedCharacter);
     const generatedItem = batchItems.find((item) => normalizeLetter(item.target_character) === normalizedCharacter);
+    if (normalizedImageUrl) {
+      return {
+        key: `normalized-${normalizedCharacter}`,
+        character: normalizedCharacter,
+        imageUrl: normalizedImageUrl,
+        alt: normalizedCharacter,
+      };
+    }
     if (seedReference) {
       return {
         key: `seed-${normalizedCharacter}`,
+        character: normalizedCharacter,
         imageUrl: seedReference.previewUrl,
         alt: normalizedCharacter,
       };
@@ -90,42 +112,104 @@ export default function App() {
     if (generatedItem) {
       return {
         key: generatedItem.run_id,
+        character: normalizedCharacter,
         imageUrl: generatedItem.generated_image_data_url,
         alt: normalizedCharacter,
       };
     }
     return {
       key: `empty-${normalizedCharacter}`,
+      character: normalizedCharacter,
       imageUrl: "",
       alt: normalizedCharacter,
     };
   });
 
   const drawStageTabs = (
-    <div className="session-frame-tabs">
-      <button
-        type="button"
-        className={`session-view-toggle-button${drawStageTab === "draw" ? " is-active" : ""}`}
-        onClick={() => handleDrawStageTabChange("draw")}
-      >
-        Draw
-      </button>
-      <button
-        type="button"
-        className={`session-view-toggle-button${drawStageTab === "vector" ? " is-active" : ""}`}
-        onClick={() => handleDrawStageTabChange("vector")}
-      >
-        Vector
-      </button>
-      <button
-        type="button"
-        className={`session-view-toggle-button${drawStageTab === "skeleton" ? " is-active" : ""}`}
-        onClick={() => handleDrawStageTabChange("skeleton")}
-      >
-        Skeleton
-      </button>
+    <div className={`session-frame-tabs-shell ${drawTabsOpen ? "is-open" : "is-collapsed"}`}>
+      {drawTabsOpen ? (
+        <div className="session-frame-tabs">
+          <button
+            type="button"
+            className={`session-view-toggle-button${drawStageTab === "draw" ? " is-active" : ""}`}
+            onClick={() => handleDrawStageTabChange("draw")}
+          >
+            D
+          </button>
+          <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
+          <button
+            type="button"
+            className={`session-view-toggle-button${drawStageTab === "vector" ? " is-active" : ""}`}
+            onClick={() => handleDrawStageTabChange("vector")}
+          >
+            V
+          </button>
+          <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
+          <button
+            type="button"
+            className={`session-view-toggle-button${drawStageTab === "skeleton" ? " is-active" : ""}`}
+            onClick={() => handleDrawStageTabChange("skeleton")}
+          >
+            S
+          </button>
+          <button
+            type="button"
+            className="session-frame-toggle-button"
+            aria-label="Close view controls"
+            onClick={() => setDrawTabsOpen(false)}
+          >
+            -
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="session-frame-toggle-button"
+          aria-label="Open view controls"
+          onClick={() => setDrawTabsOpen(true)}
+        >
+          +
+        </button>
+      )}
     </div>
   );
+
+  function stepSourceCharacter(direction: "next" | "previous") {
+    setSourceCharacter((current) =>
+      direction === "next" ? nextAlphabetCharacter(current) : previousAlphabetCharacter(current),
+    );
+  }
+
+  function handleDrawScreenKeys(
+    event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "preventDefault" | "stopPropagation">,
+  ) {
+    if (event.metaKey || event.ctrlKey || event.altKey) {
+      return false;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      event.stopPropagation();
+      stepSourceCharacter("next");
+      return true;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      event.stopPropagation();
+      stepSourceCharacter("previous");
+      return true;
+    }
+
+    if (event.key.length === 1 && /[a-z]/i.test(event.key)) {
+      event.preventDefault();
+      event.stopPropagation();
+      setSourceCharacter(normalizeLetter(event.key));
+      return true;
+    }
+
+    return false;
+  }
 
   const reviewTabs = (
     <div className="session-frame-tabs">
@@ -136,6 +220,7 @@ export default function App() {
       >
         AI Generated
       </button>
+      <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
       <button
         type="button"
         className={`session-view-toggle-button${reviewTab === "vector" ? " is-active" : ""}`}
@@ -143,6 +228,7 @@ export default function App() {
       >
         Interpreted Vector
       </button>
+      <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
       <button
         type="button"
         className={`session-view-toggle-button${reviewTab === "final" ? " is-active" : ""}`}
@@ -197,7 +283,82 @@ export default function App() {
   }, [sessionId]);
 
   useEffect(() => {
-    if (!sessionId) {
+    if (
+      !sessionId ||
+      !session ||
+      session.stage !== "review" ||
+      session.status !== "ready" ||
+      !session.latest_run_id ||
+      batchResult ||
+      result
+    ) {
+      return;
+    }
+    if (
+      hydratedRunIdRef.current === session.latest_run_id ||
+      hydratingRunIdRef.current === session.latest_run_id
+    ) {
+      return;
+    }
+
+    hydratingRunIdRef.current = session.latest_run_id;
+    let isActive = true;
+    const runId = session.latest_run_id;
+    const abortController = new AbortController();
+    void fetchRun(runId, abortController.signal)
+      .then((nextRun) => {
+        if (!isActive) {
+          return;
+        }
+        hydratedRunIdRef.current = runId;
+        hydratingRunIdRef.current = "";
+        setResult(nextRun);
+        setReviewTab("skeleton");
+      })
+      .catch(() => {
+        if (abortController.signal.aborted) {
+          return;
+        }
+        if (hydratingRunIdRef.current === runId) {
+          hydratingRunIdRef.current = "";
+        }
+        // Ignore transient load errors; polling will retry through session updates.
+      });
+
+    return () => {
+      isActive = false;
+      abortController.abort();
+    };
+  }, [sessionId, session?.stage, session?.status, session?.latest_run_id, result, batchResult]);
+
+  useEffect(() => {
+    if (
+      !session ||
+      session.stage !== "review" ||
+      !session.latest_run_id ||
+      !result ||
+      batchResult ||
+      result.run_id === session.latest_run_id
+    ) {
+      return;
+    }
+
+    setResult(null);
+    hydratedRunIdRef.current = "";
+    hydratingRunIdRef.current = "";
+  }, [session?.stage, session?.latest_run_id, result, batchResult]);
+
+  useEffect(() => {
+    const shouldPollSession = Boolean(
+      sessionId &&
+      (
+        isSubmitting ||
+        !session ||
+        session.status !== "ready"
+      ),
+    );
+
+    if (!sessionId || !shouldPollSession) {
       return;
     }
 
@@ -214,7 +375,7 @@ export default function App() {
     return () => {
       window.clearInterval(interval);
     };
-  }, [sessionId]);
+  }, [sessionId, session, result, batchResult, isSubmitting]);
 
   useEffect(() => {
     if (!drawingData) {
@@ -228,6 +389,29 @@ export default function App() {
   }, [drawingData?.strokes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    const isDrawScreen = Boolean(sessionId && session?.stage === "draw" && !result && !batchResult && !isSubmitting);
+    if (!isDrawScreen) {
+      return;
+    }
+
+    function handleGlobalLetterStepper(event: KeyboardEvent) {
+      const activeElement = document.activeElement;
+      const shouldBlurLetterInput =
+        activeElement instanceof HTMLInputElement && activeElement.classList.contains("session-letter-input");
+
+      const didHandle = handleDrawScreenKeys(event);
+      if (didHandle && shouldBlurLetterInput) {
+        activeElement.blur();
+      }
+    }
+
+    document.addEventListener("keydown", handleGlobalLetterStepper, true);
+    return () => {
+      document.removeEventListener("keydown", handleGlobalLetterStepper, true);
+    };
+  }, [sessionId, session?.stage, result, batchResult, isSubmitting]);
+
+  useEffect(() => {
     if (!result?.generated_image_data_url) {
       setInterpretedVectorImage("");
       setFinalRenderImage("");
@@ -235,7 +419,7 @@ export default function App() {
       return;
     }
 
-    if (result.interpreted_vector_data_url || result.final_render_data_url) {
+    if (result.interpreted_vector_data_url && result.final_render_data_url) {
       setInterpretedVectorImage(result.interpreted_vector_data_url);
       setFinalRenderImage(result.final_render_data_url);
       setIsPreparingReviewArtifacts(false);
@@ -276,6 +460,34 @@ export default function App() {
   }, [result?.generated_image_data_url, drawingData?.brush_size, drawingData?.canvas_size, brushSize]);
 
   useEffect(() => {
+    if (!sessionId || !result || !batchResult || seedReferences.length < 2) {
+      setNormalizedExportGlyphs([]);
+      return;
+    }
+
+    let isActive = true;
+    void (async () => {
+      try {
+        const glyphs = await buildExportGlyphs(seedReferences, result, batchResult);
+        const normalized = await normalizeGlyphSet(sessionId, glyphs);
+        if (!isActive) {
+          return;
+        }
+        setNormalizedExportGlyphs(normalized.glyphs);
+      } catch {
+        if (!isActive) {
+          return;
+        }
+        setNormalizedExportGlyphs([]);
+      }
+    })();
+
+    return () => {
+      isActive = false;
+    };
+  }, [sessionId, seedReferences, result, batchResult]);
+
+  useEffect(() => {
     if (
       !sessionId ||
       !session ||
@@ -312,6 +524,8 @@ export default function App() {
           brushSizeForRevision,
           [toAdditionalReference(secondarySeed)],
         );
+        hydratedRunIdRef.current = nextResult.run_id;
+        hydratingRunIdRef.current = "";
         setResult(nextResult);
         setReviewTab("skeleton");
         const nextSession = await fetchSession(sessionId);
@@ -352,6 +566,8 @@ export default function App() {
         "final",
         drawingData?.brush_size ?? brushSize,
       );
+      hydratedRunIdRef.current = nextResult.run_id;
+      hydratingRunIdRef.current = "";
       setTargetCharacter(effectiveTargetCharacter);
       setResult(nextResult);
       setBatchResult(null);
@@ -484,8 +700,10 @@ export default function App() {
         drawingData?.brush_size ?? brushSize,
         [toAdditionalReference(nextSeedReferences[1])],
       );
-        setSourceCharacter(primarySeed.character);
-        setTargetCharacter(effectiveTargetCharacter);
+      hydratedRunIdRef.current = nextResult.run_id;
+      hydratingRunIdRef.current = "";
+      setSourceCharacter(primarySeed.character);
+      setTargetCharacter(effectiveTargetCharacter);
       setResult(nextResult);
       setReviewTab("skeleton");
       setBatchResult(null);
@@ -651,7 +869,7 @@ export default function App() {
     setErrorMessage("");
 
     try {
-      const fontBlob = previewFontBlob ?? await buildPreviewFontBlob(sessionId, seedReferences, result, batchResult);
+      const fontBlob = previewFontBlob ?? await buildPreviewFontBlob(sessionId, seedReferences, result, batchResult, normalizedExportGlyphs);
       setPreviewFontBlob(fontBlob);
       downloadBlob(fontBlob, `fontsketch-partial-${sessionId}.ttf`);
     } catch (error) {
@@ -671,7 +889,7 @@ export default function App() {
     setErrorMessage("");
 
     try {
-      const fontBlob = previewFontBlob ?? await buildPreviewFontBlob(sessionId, seedReferences, result, batchResult);
+      const fontBlob = previewFontBlob ?? await buildPreviewFontBlob(sessionId, seedReferences, result, batchResult, normalizedExportGlyphs);
       setPreviewFontBlob(fontBlob);
       await loadPreviewFont(fontBlob, previewFontFamily);
       await updateSession(sessionId, {
@@ -685,6 +903,16 @@ export default function App() {
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  function handleBackToReviewSet() {
+    setPostBatchStage("grid");
+  }
+
+  function toggleBatchLetterSelection(character: string) {
+    setSelectedBatchLetters((current) =>
+      current.includes(character) ? current.filter((item) => item !== character) : [...current, character],
+    );
   }
 
   if (sessionId) {
@@ -703,11 +931,21 @@ export default function App() {
           ) : batchResult ? (
             <section className="session-review-layout">
               {postBatchStage === "grid" ? (
-                <>
+                <div className="session-stage-stack">
                   <section className="session-review-frame session-batch-frame">
                     <div className="session-batch-grid">
                       {batchGridItems.map((item) => (
                         <div key={item.key} className="session-batch-cell">
+                          <button
+                            type="button"
+                            className={`session-batch-select${selectedBatchLetters.includes(item.character) ? " is-selected" : ""}`}
+                            aria-label={`Select ${item.character}`}
+                            onClick={() => toggleBatchLetterSelection(item.character)}
+                          >
+                            {selectedBatchLetters.includes(item.character) || item.imageUrl ? (
+                              <img src={approveIcon} alt="" className="session-batch-select-icon" />
+                            ) : null}
+                          </button>
                           {item.imageUrl ? (
                             <img className="session-batch-image" src={item.imageUrl} alt={item.alt} />
                           ) : null}
@@ -716,19 +954,29 @@ export default function App() {
                     </div>
                   </section>
                   <div className="session-review-actions">
-                    <button
-                      type="button"
-                      className="button session-submit-button session-review-approve-button"
-                      onClick={handleOpenFontPreview}
-                      aria-label="Preview Font"
-                      title="Preview Font"
-                    >
-                      <img src={approveIcon} alt="" className="session-submit-icon" />
-                    </button>
+                    <div className="session-review-actions-spacer" />
+                    <div className="session-review-actions-trailing">
+                      <button
+                        type="button"
+                        className="session-icon-button session-review-placeholder-button"
+                        aria-label="Edit selected letters"
+                        disabled={selectedBatchLetters.length === 0}
+                      >
+                        <img src={redoIcon} alt="" className="session-icon-image" />
+                      </button>
+                      <button
+                        type="button"
+                        className="session-submit-button session-review-approve-button"
+                        onClick={handleOpenFontPreview}
+                        aria-label="Preview Font"
+                      >
+                        <img src={approveIcon} alt="" className="session-submit-icon" />
+                      </button>
+                    </div>
                   </div>
-                </>
+                </div>
               ) : (
-                <>
+                <div className="session-stage-stack">
                   <section className="session-review-frame session-font-preview-frame">
                     <textarea
                       className="session-font-preview-textarea"
@@ -740,159 +988,167 @@ export default function App() {
                   <div className="session-review-actions">
                     <button
                       type="button"
-                      className="button button-secondary"
-                      onClick={() => setPostBatchStage("grid")}
+                      className="session-icon-button"
+                      onClick={handleBackToReviewSet}
+                      aria-label="Back"
                     >
-                      Back
+                      <img src={backIcon} alt="" className="session-icon-image" />
                     </button>
                     <button
                       type="button"
-                      className="button session-submit-button session-review-approve-button"
+                      className="session-submit-button session-review-approve-button"
                       onClick={handleExportPartialFont}
+                      aria-label="Download Font"
                     >
-                      Download Font
+                      <img src={downloadIcon} alt="" className="session-submit-icon" />
                     </button>
                   </div>
-                </>
+                </div>
               )}
             </section>
           ) : session.stage === "review" && result ? (
             <section className="session-review-layout">
-              <section className="session-review-frame">
-                {reviewTabs}
-                {reviewTab === "skeleton" ? (
-                  <img className="session-result-image" src={result.generated_image_data_url} alt={`Generated ${result.target_character}`} />
-                ) : reviewTab === "vector" ? (
-                  interpretedVectorImage ? (
-                    <img className="session-result-image" src={interpretedVectorImage} alt={`Interpreted vector for ${result.target_character}`} />
+              <div className="session-stage-stack">
+                <section className="session-review-frame">
+                  {reviewTabs}
+                  {reviewTab === "skeleton" ? (
+                    <img className="session-result-image" src={result.generated_image_data_url} alt={`Generated ${result.target_character}`} />
                   ) : (
-                    <div className="session-preview-placeholder">
-                      {isPreparingReviewArtifacts ? "Preparing vector..." : "Vector interpretation unavailable."}
-                    </div>
-                  )
-                ) : (
-                  finalRenderImage ? (
-                    <img className="session-result-image" src={finalRenderImage} alt={`Final render for ${result.target_character}`} />
-                  ) : (
-                    <div className="session-preview-placeholder">
-                      {isPreparingReviewArtifacts ? "Preparing final render..." : "Final render unavailable."}
-                    </div>
-                  )
-                )}
-              </section>
+                    reviewTab === "vector" ? (
+                      interpretedVectorImage ? (
+                        <img className="session-result-image" src={interpretedVectorImage} alt={`Interpreted vector for ${result.target_character}`} />
+                      ) : (
+                        <div className="session-preview-placeholder">
+                          {isPreparingReviewArtifacts ? "Preparing vector..." : "Vector interpretation unavailable."}
+                        </div>
+                      )
+                    ) : finalRenderImage ? (
+                      <img className="session-result-image" src={finalRenderImage} alt={`Final render for ${result.target_character}`} />
+                    ) : (
+                      <div className="session-preview-placeholder">
+                        {isPreparingReviewArtifacts ? "Preparing final render..." : "Final render unavailable."}
+                      </div>
+                    )
+                  )}
+                </section>
 
-              {!isAwaitingEditPrompt ? (
-                <div className="session-review-actions">
-                  <button
-                    type="button"
-                    className="session-icon-button session-review-edit-button"
-                    aria-label="Edit"
-                    title="Edit"
-                    onClick={handleEditRequest}
-                  >
-                    <img src={clearIcon} alt="" className="session-icon-image" />
-                  </button>
-                  <button
-                    type="button"
-                    className="button session-submit-button session-review-approve-button"
-                    aria-label="Approve"
-                    title="Approve and generate next 3"
-                    onClick={handleApprove}
-                  >
-                    <img src={approveIcon} alt="" className="session-submit-icon" />
-                  </button>
-                </div>
-              ) : null}
+                {!isAwaitingEditPrompt ? (
+                  <div className="session-review-actions">
+                    <div className="session-current-letter">
+                      <span className="session-current-letter-value">"{result.target_character}"</span>
+                    </div>
+                    <div className="session-review-actions-trailing">
+                      <button
+                        type="button"
+                        className="session-icon-button session-review-edit-button"
+                        aria-label="Edit"
+                        onClick={handleEditRequest}
+                      >
+                        <img src={redoIcon} alt="" className="session-icon-image" />
+                      </button>
+                      <button
+                        type="button"
+                        className="session-submit-button session-review-approve-button"
+                        aria-label="Approve"
+                        onClick={handleApprove}
+                      >
+                        <img src={approveIcon} alt="" className="session-submit-icon" />
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </section>
           ) : (
-            <section className="session-draw-layout">
-              {drawStageTab === "vector" ? (
-                <div className="session-stage-meta">
-                  {drawingData?.brush_label ?? brushLabelForSize(brushSize)} · {strokeCount} strokes · {pointCount} pts
-                </div>
-              ) : null}
-              {drawStageTab === "skeleton" && skeletonPreviewImage ? (
-                <>
+            <section
+              className="session-draw-layout"
+              onKeyDownCapture={(event) => {
+                handleDrawScreenKeys(event);
+              }}
+            >
+              <div className="session-stage-stack">
+                {drawStageTab === "vector" ? (
+                  <div className="session-stage-meta">
+                    {drawingData?.brush_label ?? brushLabelForSize(brushSize)} · {strokeCount} strokes · {pointCount} pts
+                  </div>
+                ) : null}
+                {drawStageTab === "skeleton" && skeletonPreviewImage ? (
                   <section className="session-review-frame session-inline-skeleton-frame">
                     {drawStageTabs}
                     <img className="session-result-image" src={skeletonPreviewImage} alt={`Skeleton preview for ${targetCharacter}`} />
                   </section>
-                </>
-              ) : (
-                <DrawingCanvas
-                  ref={sessionCanvasRef}
-                  onExportReady={setReferenceBlob}
-                  onVectorChange={setDrawingData}
-                  initialDrawing={drawingData}
-                  size={SESSION_CANVAS_SIZE}
-                  brushSize={brushSize}
-                  showToolbar={false}
-                  showActions={false}
-                  viewMode={drawStageTab === "vector" ? "vector" : "draw"}
-                  overlay={drawStageTabs}
-                />
-              )}
-
-              <div className="session-draw-controls">
-                {BRUSH_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    className={`session-brush-button session-brush-button-${option.label.toLowerCase()}${brushSize === option.value ? " is-active" : ""}`}
-                    onClick={() => setBrushSize(option.value)}
-                    aria-label={option.label}
-                    title={option.label}
-                  >
-                    <span
-                      className="session-brush-dot"
-                      style={{ width: option.value, height: option.value }}
+                  ) : (
+                    <DrawingCanvas
+                      ref={sessionCanvasRef}
+                      onExportReady={setReferenceBlob}
+                      onVectorChange={setDrawingData}
+                      initialDrawing={drawingData}
+                      size={SESSION_CANVAS_SIZE}
+                      brushSize={brushSize}
+                      showToolbar={false}
+                      showActions={false}
+                      viewMode={drawStageTab === "vector" ? "vector" : "draw"}
+                      overlay={drawStageTabs}
                     />
-                  </button>
-                ))}
-
-                <button type="button" className="session-icon-button" onClick={() => sessionCanvasRef.current?.undo()} aria-label="Undo" title="Undo">
-                  <img src={undoIcon} alt="" className="session-icon-image" />
-                </button>
-
-                <button type="button" className="session-icon-button" onClick={() => sessionCanvasRef.current?.clear()} aria-label="Clear" title="Clear">
-                  <img src={clearIcon} alt="" className="session-icon-image" />
-                </button>
-
-                <div className="session-seed-control">
-                  <input
-                    className="session-letter-input"
-                    value={sourceCharacter}
-                    maxLength={1}
-                    onChange={(event) => setSourceCharacter(normalizeLetter(event.target.value))}
-                    onKeyDown={(event) => {
-                      if (event.key === "ArrowUp") {
+                  )}
+                <div className="session-draw-controls">
+                  <div className="session-seed-control">
+                    <input
+                      className="session-letter-input"
+                      value={sourceCharacter}
+                      maxLength={1}
+                      readOnly
+                      tabIndex={-1}
+                      onMouseDown={(event) => {
                         event.preventDefault();
-                        setSourceCharacter(nextAlphabetCharacter(sourceCharacter));
-                      }
-                      if (event.key === "ArrowDown") {
-                        event.preventDefault();
-                        setSourceCharacter(previousAlphabetCharacter(sourceCharacter));
-                      }
-                    }}
-                  />
-                  <div className="session-letter-stepper">
-                    <button type="button" className="session-step-button" onClick={() => setSourceCharacter(nextAlphabetCharacter(sourceCharacter))}>
-                      <img src={letterUpIcon} alt="" className="session-step-icon" />
-                    </button>
-                    <button type="button" className="session-step-button" onClick={() => setSourceCharacter(previousAlphabetCharacter(sourceCharacter))}>
-                      <img src={letterDownIcon} alt="" className="session-step-icon" />
-                    </button>
+                      }}
+                    />
+                    <div className="session-letter-stepper">
+                      <button type="button" className="session-step-button" onClick={() => stepSourceCharacter("next")}>
+                        <img src={letterUpIcon} alt="" className="session-step-icon" />
+                      </button>
+                      <button type="button" className="session-step-button" onClick={() => stepSourceCharacter("previous")}>
+                        <img src={letterDownIcon} alt="" className="session-step-icon" />
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                <button
-                  type="button"
-                  className="button session-submit-button"
-                  disabled={isSubmitting || (drawStageTab === "skeleton" ? !skeletonPreviewImage : strokeCount === 0)}
-                  onClick={handleGenerate}
-                >
-                  {isSubmitting ? "..." : <img src={sendIcon} alt="" className="session-submit-icon" />}
-                </button>
+                  <div className="session-controls-separator" aria-hidden="true" />
+
+                  {BRUSH_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={`session-brush-button session-brush-button-${option.label.toLowerCase()}${brushSize === option.value ? " is-active" : ""}`}
+                      onClick={() => setBrushSize(option.value)}
+                      aria-label={option.label}
+                    >
+                      <span
+                        className="session-brush-dot"
+                        style={{ width: option.value, height: option.value }}
+                      />
+                    </button>
+                  ))}
+
+                  <div className="session-controls-separator" aria-hidden="true" />
+
+                  <button type="button" className="session-icon-button" onClick={() => sessionCanvasRef.current?.undo()} aria-label="Undo">
+                    <img src={undoIcon} alt="" className="session-icon-image" />
+                  </button>
+
+                  <button type="button" className="session-icon-button" onClick={() => sessionCanvasRef.current?.clear()} aria-label="Clear">
+                    <img src={clearIcon} alt="" className="session-icon-image" />
+                  </button>
+
+                  <button
+                    type="button"
+                    className="session-submit-button"
+                    disabled={isSubmitting || (drawStageTab === "skeleton" ? !skeletonPreviewImage : strokeCount === 0)}
+                    onClick={handleGenerate}
+                  >
+                    {isSubmitting ? "..." : <img src={approveIcon} alt="" className="session-submit-icon" />}
+                  </button>
+                </div>
               </div>
 
               {errorMessage ? <p className="error-text">{errorMessage}</p> : null}
@@ -1109,9 +1365,23 @@ async function buildPreviewFontBlob(
   seedReferences: SeedReference[],
   result: RunResponse,
   batchResult: BatchResponse,
+  normalizedGlyphs: GlyphOutlineExportItem[],
 ): Promise<Blob> {
-  const glyphs = await buildExportGlyphs(seedReferences, result, batchResult);
+  const glyphs = normalizedGlyphs.length > 0
+    ? normalizedGlyphs
+    : await buildNormalizedExportGlyphs(sessionId, seedReferences, result, batchResult);
   return exportPartialFont(sessionId, glyphs);
+}
+
+async function buildNormalizedExportGlyphs(
+  sessionId: string,
+  seedReferences: SeedReference[],
+  result: RunResponse,
+  batchResult: BatchResponse,
+): Promise<GlyphOutlineExportItem[]> {
+  const glyphs = await buildExportGlyphs(seedReferences, result, batchResult);
+  const normalized = await normalizeGlyphSet(sessionId, glyphs);
+  return normalized.glyphs;
 }
 
 function toAdditionalReference(reference: SeedReference): AdditionalReferenceInput {

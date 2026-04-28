@@ -11,6 +11,8 @@ from app.services.provider_clients import (
 )
 from app.services.vectorizer import vectorize_centerline_and_render
 
+MAX_RETURNED_VECTOR_DATA_URL_BYTES = 2_000_000
+
 
 class GenerationOrchestrator:
     def __init__(self) -> None:
@@ -126,6 +128,7 @@ class GenerationOrchestrator:
             self.storage.update_session(
                 session_id,
                 {
+                    "status": "ready",
                     "stage": "review",
                     "instruction": (
                         f'Review the generated "{target_character.upper()}" glyph skeleton.'
@@ -171,6 +174,72 @@ class GenerationOrchestrator:
             target_characters=target_characters,
             accepted_run_id=accepted_run_id,
             items=items,
+        )
+
+    def load_run(self, run_id: str) -> GlyphGenerationResponse | None:
+        run_dir = self.storage.runs_dir / run_id
+        manifest_path = run_dir / "manifest.json"
+        if not manifest_path.exists():
+            return None
+
+        manifest = self.storage.read_json(manifest_path)
+        generated_rel = manifest.get("generated_image_path")
+        if not generated_rel:
+            return None
+
+        generated_path = run_dir / generated_rel
+        if not generated_path.exists():
+            return None
+
+        generated_bytes = self.storage.read_bytes(generated_path)
+        image_base64 = base64.b64encode(generated_bytes).decode("utf-8")
+
+        interpreted_vector_rel = manifest.get("interpreted_vector_path", "")
+        final_render_rel = manifest.get("final_render_path", "")
+        interpreted_vector_data_url = ""
+        final_render_data_url = ""
+        if interpreted_vector_rel:
+            interpreted_vector_path = run_dir / interpreted_vector_rel
+            if (
+                interpreted_vector_path.exists()
+                and interpreted_vector_path.stat().st_size <= MAX_RETURNED_VECTOR_DATA_URL_BYTES
+            ):
+                interpreted_vector_data_url = interpreted_vector_path.read_text(encoding="utf-8")
+        if final_render_rel:
+            final_render_path = run_dir / final_render_rel
+            if final_render_path.exists():
+                final_render_data_url = final_render_path.read_text(encoding="utf-8")
+
+        prompt = ""
+        prompt_path = run_dir / "kimi" / "prompt.json"
+        if prompt_path.exists():
+            prompt_payload = self.storage.read_json(prompt_path)
+            prompt = prompt_payload.get("prompt", "")
+
+        return GlyphGenerationResponse(
+            run_id=run_id,
+            backend_version=get_backend_version(),
+            source_character=(manifest.get("source_character") or "A").upper(),
+            target_character=(manifest.get("target_character") or "B").upper(),
+            correction=manifest.get("correction", "") or "",
+            suggested_revision="",
+            generated_image_data_url=f"data:image/png;base64,{image_base64}",
+            interpreted_vector_data_url=interpreted_vector_data_url,
+            final_render_data_url=final_render_data_url,
+            analysis=None,
+            debug=[
+                DebugEntry(
+                    step="generate",
+                    payload={
+                        "mode": "revise" if manifest.get("used_previous_generated_image") else "first_pass",
+                        "source_character": (manifest.get("source_character") or "A").upper(),
+                        "target_character": (manifest.get("target_character") or "B").upper(),
+                        "previous_run_id": manifest.get("previous_run_id", "") or "",
+                        "correction": manifest.get("correction", "") or "",
+                        "prompt": prompt,
+                    },
+                )
+            ],
         )
 
     @staticmethod

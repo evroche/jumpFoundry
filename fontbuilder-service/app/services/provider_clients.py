@@ -103,7 +103,7 @@ class OpenAIImagesClient:
             "prompt": prompt,
             "size": self.settings.openai_image_size,
             "quality": self.settings.openai_image_quality,
-            "background": "opaque",
+            "background": "transparent",
             "output_format": "png",
             "input_fidelity": self.settings.openai_input_fidelity,
         }

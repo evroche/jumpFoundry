@@ -11,6 +11,10 @@ from PIL import Image, ImageDraw
 Point = tuple[float, float]
 Pixel = tuple[int, int]
 
+MAX_TOTAL_POLYLINE_POINTS = 12000
+MAX_POINTS_PER_POLYLINE = 600
+MAX_VECTOR_DATA_URL_CHARS = 2_000_000
+
 
 def vectorize_centerline_and_render(
     image_bytes: bytes,
@@ -18,12 +22,13 @@ def vectorize_centerline_and_render(
     brush_size: int,
     output_size: int = 1024,
 ) -> tuple[str, str]:
-    image = Image.open(io.BytesIO(image_bytes)).convert("L")
+    image = _prepare_grayscale_image(image_bytes)
     image = image.resize((output_size, output_size))
     binary = _binarize(image)
     skeleton = _zhang_suen_thinning(binary)
     polylines = _trace_polylines(skeleton)
     simplified = [_rdp(polyline, epsilon=2.4) for polyline in polylines if len(polyline) > 1]
+    simplified = _cap_polyline_complexity(simplified)
 
     vector_data_url = _vector_svg_data_url(simplified, output_size)
     final_data_url = _render_final_png_data_url(simplified, output_size, brush_size)
@@ -37,6 +42,17 @@ def _binarize(image: Image.Image) -> list[list[int]]:
         [1 if pixels[x, y] < 220 else 0 for x in range(width)]
         for y in range(height)
     ]
+
+
+def _prepare_grayscale_image(image_bytes: bytes) -> Image.Image:
+    image = Image.open(io.BytesIO(image_bytes))
+    if "A" not in image.getbands():
+        return image.convert("L")
+
+    rgba = image.convert("RGBA")
+    background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+    composited = Image.alpha_composite(background, rgba)
+    return composited.convert("L")
 
 
 def _zhang_suen_thinning(binary: list[list[int]]) -> list[list[int]]:
@@ -248,7 +264,10 @@ def _vector_svg_data_url(polylines: list[list[Point]], size: int) -> str:
         "</svg>"
     )
     encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
-    return f"data:image/svg+xml;base64,{encoded}"
+    data_url = f"data:image/svg+xml;base64,{encoded}"
+    if len(data_url) > MAX_VECTOR_DATA_URL_CHARS:
+        return ""
+    return data_url
 
 
 def _render_final_png_data_url(polylines: list[list[Point]], size: int, brush_size: int) -> str:
@@ -311,3 +330,33 @@ def _stamp_brush_segment(
         x = x1 + (x2 - x1) * t
         y = y1 + (y2 - y1) * t
         draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=17)
+
+
+def _cap_polyline_complexity(polylines: list[list[Point]]) -> list[list[Point]]:
+    if not polylines:
+        return polylines
+
+    capped_polylines = [_downsample_polyline(polyline, MAX_POINTS_PER_POLYLINE) for polyline in polylines]
+    total_points = sum(len(polyline) for polyline in capped_polylines)
+    if total_points <= MAX_TOTAL_POLYLINE_POINTS:
+        return capped_polylines
+
+    reduction_ratio = MAX_TOTAL_POLYLINE_POINTS / max(total_points, 1)
+    return [
+        _downsample_polyline(polyline, max(2, int(len(polyline) * reduction_ratio)))
+        for polyline in capped_polylines
+    ]
+
+
+def _downsample_polyline(polyline: list[Point], max_points: int) -> list[Point]:
+    if len(polyline) <= max_points:
+        return polyline
+    if max_points <= 2:
+        return [polyline[0], polyline[-1]]
+
+    step = (len(polyline) - 1) / (max_points - 1)
+    sampled = [polyline[0]]
+    for index in range(1, max_points - 1):
+        sampled.append(polyline[round(index * step)])
+    sampled.append(polyline[-1])
+    return sampled

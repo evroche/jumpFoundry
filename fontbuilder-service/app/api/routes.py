@@ -10,13 +10,14 @@ from app.schemas.glyph import (
     FontSessionUpdateRequest,
     GlyphBatchResponse,
     GlyphGenerationResponse,
+    GlyphNormalizationResponse,
     GlyphOutlineExportRequest,
     SkeletonPreviewRequest,
     SkeletonPreviewResponse,
 )
 from app.services.file_storage import RunStorage
 from app.services.font_export import build_partial_ttf
-from app.services.outline_export import build_outline_svg_zip
+from app.services.outline_export import build_outline_svg_zip, normalize_glyph_images
 from app.services.orchestrator import GenerationOrchestrator
 from app.services.skeleton_renderer import render_skeleton_preview
 
@@ -262,6 +263,14 @@ async def generate_many(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@router.get("/api/v1/runs/{run_id}", response_model=GlyphGenerationResponse)
+async def get_run(run_id: str) -> GlyphGenerationResponse:
+    run = orchestrator.load_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return run
+
+
 @router.post("/api/v1/export-outline-set")
 async def export_outline_set(payload: GlyphOutlineExportRequest) -> StreamingResponse:
     if not payload.glyphs:
@@ -272,6 +281,17 @@ async def export_outline_set(payload: GlyphOutlineExportRequest) -> StreamingRes
         io.BytesIO(archive_bytes),
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/api/v1/normalize-glyph-set", response_model=GlyphNormalizationResponse)
+async def normalize_glyph_set(payload: GlyphOutlineExportRequest) -> GlyphNormalizationResponse:
+    if not payload.glyphs:
+        raise HTTPException(status_code=400, detail="glyphs must contain at least one item")
+    return GlyphNormalizationResponse(
+        backend_version=get_backend_version(),
+        session_id=payload.session_id,
+        glyphs=normalize_glyph_images([item.model_dump() for item in payload.glyphs]),
     )
 
 

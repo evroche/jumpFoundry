@@ -39,6 +39,7 @@ export type DrawingCanvasHandle = {
 };
 
 const CANVAS_SIZE = 360;
+const BRUSH_RENDER_SCALE = 1.832;
 
 export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(function DrawingCanvas({
   onExportReady,
@@ -53,9 +54,9 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
   overlay = null,
 }, ref) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [isDrawing, setIsDrawing] = useState(false);
   const [strokes, setStrokes] = useState<DrawingStroke[]>(() => initialDrawing?.strokes ?? []);
-  const [currentStroke, setCurrentStroke] = useState<DrawingStroke | null>(null);
+  const isDrawingRef = useRef(false);
+  const currentStrokeRef = useRef<DrawingStroke | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -64,8 +65,8 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
       return;
     }
 
-    renderDrawing(context, size, strokes, currentStroke, viewMode);
-  }, [currentStroke, size, strokes, viewMode]);
+    renderDrawing(context, size, strokes, currentStrokeRef.current, viewMode, null);
+  }, [size, strokes, viewMode]);
 
   useEffect(() => {
     if (!onVectorChange) {
@@ -107,30 +108,28 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
     }
 
     const point = getPoint(event);
-    setCurrentStroke({
+    const nextStroke: DrawingStroke = {
       points: [point],
       brush_size: brushSize,
       brush_label: getBrushLabel(brushSize),
-    });
-    setIsDrawing(true);
+    };
+    currentStrokeRef.current = nextStroke;
+    isDrawingRef.current = true;
+    redrawCanvas(nextStroke);
     canvas.setPointerCapture(event.pointerId);
   }
 
   function handlePointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
-    if (!isDrawing || !currentStroke) {
+    if (!isDrawingRef.current || !currentStrokeRef.current) {
       return;
     }
 
     const point = getPoint(event);
-    setCurrentStroke((active) => {
-      if (!active) {
-        return active;
-      }
-      return {
-        ...active,
-        points: [...active.points, point],
-      };
-    });
+    currentStrokeRef.current = {
+      ...currentStrokeRef.current,
+      points: [...currentStrokeRef.current.points, point],
+    };
+    redrawCanvas(currentStrokeRef.current);
   }
 
   function stopDrawing(event?: React.PointerEvent<HTMLCanvasElement>) {
@@ -138,13 +137,14 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
       canvasRef.current.releasePointerCapture(event.pointerId);
     }
 
-    setIsDrawing(false);
-    setCurrentStroke((active) => {
-      if (active && active.points.length > 0) {
-        setStrokes((existing) => [...existing, active]);
-      }
-      return null;
-    });
+    isDrawingRef.current = false;
+    const active = currentStrokeRef.current;
+    currentStrokeRef.current = null;
+    if (active && active.points.length > 0) {
+      setStrokes((existing) => [...existing, active]);
+    } else {
+      redrawCanvas(null);
+    }
   }
 
   async function exportRasterPreview() {
@@ -157,19 +157,21 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
       return;
     }
 
-    renderDrawing(context, size, strokes, null, "draw");
+    renderDrawing(context, size, strokes, null, "draw", null);
     const blob = await new Promise<Blob | null>((resolve) => offscreen.toBlob(resolve, "image/png"));
     onExportReady(blob);
   }
 
   function clearCanvas() {
     setStrokes([]);
-    setCurrentStroke(null);
+    currentStrokeRef.current = null;
+    isDrawingRef.current = false;
     onExportReady(null);
   }
 
   function undoStroke() {
-    setCurrentStroke(null);
+    currentStrokeRef.current = null;
+    isDrawingRef.current = false;
     setStrokes((existing) => existing.slice(0, -1));
   }
 
@@ -222,6 +224,15 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
       ) : null}
     </div>
   );
+
+  function redrawCanvas(currentStrokeOverride: DrawingStroke | null = currentStrokeRef.current) {
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) {
+      return;
+    }
+    renderDrawing(context, size, strokes, currentStrokeOverride, viewMode, null);
+  }
 });
 
 function renderDrawing(
@@ -230,10 +241,13 @@ function renderDrawing(
   strokes: DrawingStroke[],
   currentStroke: DrawingStroke | null,
   viewMode: DrawingViewMode,
+  backgroundFill: string | null,
 ) {
   context.clearRect(0, 0, size, size);
-  context.fillStyle = "#ffffff";
-  context.fillRect(0, 0, size, size);
+  if (backgroundFill) {
+    context.fillStyle = backgroundFill;
+    context.fillRect(0, 0, size, size);
+  }
 
   const allStrokes = currentStroke ? [...strokes, currentStroke] : strokes;
   if (viewMode === "vector") {
@@ -253,16 +267,17 @@ function drawBrushStroke(context: CanvasRenderingContext2D, stroke: DrawingStrok
     return;
   }
 
+  const renderedBrushSize = stroke.brush_size * BRUSH_RENDER_SCALE;
   context.strokeStyle = "#111111";
   context.lineCap = "round";
   context.lineJoin = "round";
-  context.lineWidth = stroke.brush_size;
+  context.lineWidth = renderedBrushSize;
   context.beginPath();
   context.moveTo(stroke.points[0].x, stroke.points[0].y);
 
   if (stroke.points.length === 1) {
     const point = stroke.points[0];
-    context.arc(point.x, point.y, stroke.brush_size / 2, 0, Math.PI * 2);
+    context.arc(point.x, point.y, renderedBrushSize / 2, 0, Math.PI * 2);
     context.fillStyle = "#111111";
     context.fill();
     return;

@@ -80,6 +80,12 @@ export type GlyphOutlineExportItem = {
   image_data_url: string;
 };
 
+export type GlyphNormalizationResponse = {
+  backend_version: string;
+  session_id: string;
+  glyphs: GlyphOutlineExportItem[];
+};
+
 export type AdditionalReferenceInput = {
   blob: Blob;
   character: string;
@@ -163,6 +169,14 @@ export async function fetchSession(sessionId: string): Promise<SessionResponse> 
   const response = await fetch(`${API_BASE_URL}/api/v1/sessions/${sessionId}`);
   if (!response.ok) {
     throw new Error("Failed to load session");
+  }
+  return response.json();
+}
+
+export async function fetchRun(runId: string, signal?: AbortSignal): Promise<RunResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/runs/${runId}`, { signal });
+  if (!response.ok) {
+    throw new Error("Failed to load run");
   }
   return response.json();
 }
@@ -363,6 +377,34 @@ export async function exportOutlineSet(sessionId: string, glyphs: GlyphOutlineEx
   }
 
   return response.blob();
+}
+
+export async function normalizeGlyphSet(
+  sessionId: string,
+  glyphs: GlyphOutlineExportItem[],
+): Promise<GlyphNormalizationResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/normalize-glyph-set`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      session_id: sessionId,
+      glyphs,
+    }),
+  });
+
+  if (!response.ok) {
+    let message = "Failed to normalize glyph set";
+    try {
+      const payload = await response.json();
+      message = payload.detail ?? message;
+    } catch {
+      const errorText = await response.text();
+      message = errorText || message;
+    }
+    throw new Error(message);
+  }
+
+  return response.json();
 }
 
 export async function exportPartialFont(sessionId: string, glyphs: GlyphOutlineExportItem[]): Promise<Blob> {

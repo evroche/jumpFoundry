@@ -47,6 +47,12 @@ class GlyphOutlineExportRequest(BaseModel):
     glyphs: list[GlyphOutlineExportItem]
 
 
+class GlyphNormalizationResponse(BaseModel):
+    backend_version: str
+    session_id: str = ""
+    glyphs: list[GlyphOutlineExportItem]
+
+
 StructuralMode = Literal["stroke-path", "contour-outline"]
 
 

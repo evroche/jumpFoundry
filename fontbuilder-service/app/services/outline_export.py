@@ -29,6 +29,28 @@ def build_outline_svg_zip(glyphs: list[dict[str, str]]) -> bytes:
     return buffer.getvalue()
 
 
+def normalize_glyph_images(
+    glyphs: list[dict[str, str]],
+    canvas_size: int = 1024,
+    bottom_padding: int = 4,
+) -> list[dict[str, str]]:
+    normalized_glyphs: list[dict[str, str]] = []
+    for glyph in glyphs:
+        character = (glyph.get("character") or "?")[:1].upper()
+        image_bytes, _ = decode_data_url(glyph["image_data_url"])
+        normalized_glyphs.append(
+            {
+                "character": character,
+                "image_data_url": normalize_glyph_image_data_url(
+                    image_bytes,
+                    canvas_size=canvas_size,
+                    bottom_padding=bottom_padding,
+                ),
+            }
+        )
+    return normalized_glyphs
+
+
 def decode_data_url(data_url: str) -> tuple[bytes, str]:
     header, payload = data_url.split(",", 1)
     mime_type = header[5:].split(";", 1)[0] if header.startswith("data:") else "application/octet-stream"
@@ -38,7 +60,7 @@ def decode_data_url(data_url: str) -> tuple[bytes, str]:
 
 
 def raster_to_outline_loops(image_bytes: bytes, output_size: int = 1024) -> list[list[Point]]:
-    image = Image.open(io.BytesIO(image_bytes)).convert("L")
+    image = _prepare_grayscale_image(image_bytes)
     image = image.resize((output_size, output_size))
     binary = _binarize(image)
     loops = _trace_outline_loops(binary)
@@ -76,6 +98,57 @@ def _binarize(image: Image.Image) -> list[list[int]]:
     width, height = image.size
     pixels = image.load()
     return [[1 if pixels[x, y] < 220 else 0 for x in range(width)] for y in range(height)]
+
+
+def _prepare_grayscale_image(image_bytes: bytes) -> Image.Image:
+    image = Image.open(io.BytesIO(image_bytes))
+    if "A" not in image.getbands():
+        return image.convert("L")
+
+    rgba = image.convert("RGBA")
+    background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+    composited = Image.alpha_composite(background, rgba)
+    return composited.convert("L")
+
+
+def normalize_glyph_image_data_url(
+    image_bytes: bytes,
+    canvas_size: int = 1024,
+    bottom_padding: int = 4,
+) -> str:
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+    bbox = _find_glyph_bbox(image)
+    if bbox is None:
+        output = io.BytesIO()
+        image.save(output, format="PNG")
+        encoded = base64.b64encode(output.getvalue()).decode("ascii")
+        return f"data:image/png;base64,{encoded}"
+
+    left, top, right, bottom = bbox
+    cropped = image.crop((left, top, right + 1, bottom + 1))
+    crop_width, crop_height = cropped.size
+    if crop_width <= 0 or crop_height <= 0:
+        output = io.BytesIO()
+        image.save(output, format="PNG")
+        encoded = base64.b64encode(output.getvalue()).decode("ascii")
+        return f"data:image/png;base64,{encoded}"
+
+    max_width = float(canvas_size)
+    max_height = float(max(canvas_size - bottom_padding, 1))
+    scale = min(max_width / crop_width, max_height / crop_height)
+    rendered_width = max(1, int(round(crop_width * scale)))
+    rendered_height = max(1, int(round(crop_height * scale)))
+
+    resized = cropped.resize((rendered_width, rendered_height), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
+    offset_x = max(0, int(round((canvas_size - rendered_width) / 2)))
+    offset_y = max(0, int(round(canvas_size - bottom_padding - rendered_height)))
+    canvas.alpha_composite(resized, (offset_x, offset_y))
+
+    output = io.BytesIO()
+    canvas.save(output, format="PNG")
+    encoded = base64.b64encode(output.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
 
 
 def _trace_outline_loops(binary: list[list[int]]) -> list[list[Point]]:
@@ -119,6 +192,34 @@ def _trace_outline_loops(binary: list[list[int]]) -> list[list[Point]]:
         if len(loop) > 2:
             loops.append(loop)
     return loops
+
+
+def _find_glyph_bbox(image: Image.Image) -> tuple[int, int, int, int] | None:
+    width, height = image.size
+    pixels = image.load()
+    min_x = width
+    min_y = height
+    max_x = -1
+    max_y = -1
+
+    for y in range(height):
+        for x in range(width):
+            red, green, blue, alpha = pixels[x, y]
+            if alpha <= 12:
+                continue
+            luminance = (red + green + blue) / 3
+            if luminance >= 245 and alpha < 250:
+                continue
+            if luminance >= 245 and alpha >= 250:
+                continue
+            min_x = min(min_x, x)
+            min_y = min(min_y, y)
+            max_x = max(max_x, x)
+            max_y = max(max_y, y)
+
+    if max_x < min_x or max_y < min_y:
+        return None
+    return min_x, min_y, max_x, max_y
 
 
 def _loop_to_path(loop: list[Point]) -> str:
