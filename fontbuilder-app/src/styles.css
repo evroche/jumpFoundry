@@ -1,12 +1,16 @@
 :root {
-  color: #000;
+  color: #111111;
   background: #fff;
   font-family: Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
   --session-accent: #ff3b3f;
-  --session-accent-border: #111;
-  --session-icon-color: #111;
+  --session-accent-border: #111111;
+  --session-icon-color: #111111;
+  --app-ink: #111111;
+  --session-toolbar-height: 350px;
+  --session-toolbar-padding-x: clamp(56px, 6.2vw, 88px);
+  --session-toolbar-gap: 110px;
 }
 
 * {
@@ -39,7 +43,7 @@ textarea {
   padding-left: 0;
   padding-right: 0;
   overflow: hidden;
-  --session-panel-size: min(calc(100dvh - 224px), 100vw);
+  --session-panel-size: min(calc(100dvh - var(--session-toolbar-height)), 100vw);
   user-select: none;
   -webkit-user-select: none;
   background: var(--session-accent);
@@ -87,7 +91,7 @@ textarea {
 .session-draw-layout {
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 0;
   height: 100dvh;
   min-height: 0;
@@ -114,6 +118,11 @@ textarea {
   flex: 0 0 auto;
 }
 
+.session-stage-stack-wide {
+  width: 100vw;
+  height: 100dvh;
+}
+
 .session-loading-layout {
   align-items: center;
   justify-content: center;
@@ -125,7 +134,7 @@ textarea {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  min-height: 288px;
+  min-height: 0;
   font-size: 16rem;
   line-height: 1;
   letter-spacing: 0.04em;
@@ -150,7 +159,7 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   min-height: 0;
   padding: 0;
 }
@@ -182,7 +191,7 @@ textarea {
 .session-view-toggle-button {
   border: 0;
   background: transparent;
-  color: #000;
+  color: var(--app-ink);
   padding: 0;
   font-size: 1.64rem;
   line-height: 1;
@@ -195,7 +204,7 @@ textarea {
 }
 
 .session-vector-meta {
-  border: 0.5px solid #000;
+  border: 0.5px solid var(--app-ink);
   background: #fff;
   padding: 4px 8px;
   font-size: 0.8rem;
@@ -207,9 +216,9 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: clamp(18px, 2.2vw, 28px);
-  height: 350px;
-  min-height: 350px;
-  padding: 0 clamp(56px, 6.2vw, 88px);
+  height: var(--session-toolbar-height);
+  min-height: var(--session-toolbar-height);
+  padding: 0 var(--session-toolbar-padding-x);
   font-size: 2.1rem;
   width: 100%;
   margin: 0 auto;
@@ -342,11 +351,21 @@ textarea {
   place-items: center;
   flex: 0 0 auto;
   align-self: center;
+  transition: transform 120ms ease;
 }
 
 .session-icon-button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.session-review-placeholder-button:disabled {
+  opacity: 1;
+}
+
+.session-icon-button:hover:not(:disabled),
+.session-submit-button:hover:not(:disabled) {
+  transform: scale(1.05);
 }
 
 .session-submit-button {
@@ -367,6 +386,7 @@ textarea {
   height: 156px;
   flex: 0 0 auto;
   align-self: center;
+  transition: transform 120ms ease;
 }
 
 .session-icon-image {
@@ -391,8 +411,10 @@ textarea {
 
 .session-review-layout {
   align-items: center;
+  justify-content: flex-start;
   padding-top: 2px;
   background: var(--session-accent);
+  --session-panel-size: min(calc(100dvh - 350px), 100vw);
 }
 
 .session-frame-tabs {
@@ -438,7 +460,7 @@ textarea {
 .session-frame-toggle-button {
   border: 0;
   background: transparent;
-  color: #000;
+  color: var(--app-ink);
   padding: 0;
   width: 100%;
   height: 100%;
@@ -468,6 +490,13 @@ textarea {
   overflow: hidden;
 }
 
+.session-stage-stack-wide .session-review-frame {
+  width: 100vw;
+  height: auto;
+  aspect-ratio: auto;
+  flex: 1 1 auto;
+}
+
 .session-result-image {
   width: 100%;
   height: 100%;
@@ -475,19 +504,22 @@ textarea {
   max-height: 100%;
   object-fit: contain;
   border: 0 !important;
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
 }
 
 .session-review-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: clamp(18px, 2.2vw, 28px);
+  justify-content: center;
+  gap: var(--session-toolbar-gap);
   width: 100%;
   margin: 0 auto;
   margin-top: 0;
-  height: 350px;
-  min-height: 350px;
-  padding: 0 clamp(56px, 6.2vw, 88px);
+  height: var(--session-toolbar-height);
+  min-height: var(--session-toolbar-height);
+  padding: 0 var(--session-toolbar-padding-x);
   background: var(--session-accent);
   border: 0;
   border-radius: 0;
@@ -495,38 +527,20 @@ textarea {
   flex: 0 0 auto;
 }
 
-.session-current-letter {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 0;
-  width: 170px;
-  min-width: 170px;
-  height: 156px;
-  padding-left: 35px;
-  color: var(--session-icon-color);
-  flex: 0 0 auto;
-}
-
-.session-current-letter-label {
-  display: none;
-}
-
-.session-current-letter-value {
-  font-size: 10.71rem;
-  line-height: 1;
+.session-review-actions-centered {
+  justify-content: center;
 }
 
 .session-review-actions-trailing {
   display: inline-flex;
   align-items: center;
-  gap: 83px;
-  margin-left: auto;
+  gap: var(--session-toolbar-gap);
+  margin-left: 0;
   flex: 0 0 auto;
 }
 
 .session-review-actions-spacer {
-  flex: 1 1 auto;
+  display: none;
 }
 
 .session-review-edit-button {
@@ -551,98 +565,113 @@ textarea {
 
 .session-batch-frame {
   padding: 0;
-  align-items: stretch;
+  place-items: start stretch;
+  align-items: start;
+  align-content: start;
 }
 
 .session-batch-grid {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 268px), 1fr));
   align-content: start;
-  justify-content: start;
+  justify-content: stretch;
   gap: 0;
   width: 100%;
   height: 100%;
-  border-left: 0.5px solid rgba(17, 17, 17, 0.35);
-  border-top: 0.5px solid rgba(17, 17, 17, 0.35);
 }
 
 .session-batch-cell {
   position: relative;
   display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding: 18px 18px 4px;
-  border-right: 0.5px solid rgba(17, 17, 17, 0.35);
-  border-bottom: 0.5px solid rgba(17, 17, 17, 0.35);
+  width: 100%;
   aspect-ratio: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 18px 4px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .session-batch-image {
-  max-width: 100%;
-  max-height: calc(100% - 4px);
-  width: auto;
-  height: auto;
+  width: min(78%, calc(100% - 24px));
+  height: min(78%, calc(100% - 24px));
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - 24px);
   object-fit: contain;
-  object-position: center bottom;
-  align-self: flex-end;
+  object-position: center center;
+  align-self: center;
+  flex: 0 0 auto;
 }
 
 .session-batch-select {
   position: absolute;
-  top: 0;
-  right: 0;
-  width: 16.666%;
-  height: 16.666%;
-  min-width: 22px;
-  min-height: 22px;
-  border: 0.5px solid rgba(17, 17, 17, 0.45);
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
   background: transparent;
   padding: 0;
-  display: grid;
-  place-items: center;
   cursor: pointer;
+  z-index: 1;
 }
 
-.session-batch-select:hover {
-  background: rgba(17, 17, 17, 0.4);
-}
-
-.session-batch-select.is-selected {
-  background: #111;
-}
-
-.session-batch-select.is-selected:hover {
-  background: #111;
-}
-
-.session-batch-select-icon {
-  width: 80%;
-  height: 80%;
+.session-batch-select-overlay {
   display: block;
-  filter: brightness(0) saturate(100%) invert(63%) sepia(74%) saturate(2942%) hue-rotate(329deg) brightness(102%) contrast(103%);
-  opacity: 0;
+  width: min(64%, calc(100% - 24px));
+  height: min(64%, calc(100% - 24px));
+  margin: auto;
+  border-radius: 50%;
+  background: rgba(17, 17, 17, 0);
+  transition: background 120ms ease;
 }
 
-.session-batch-select:hover .session-batch-select-icon,
-.session-batch-select.is-selected .session-batch-select-icon {
-  opacity: 1;
+.session-batch-select:hover .session-batch-select-overlay {
+  background: rgba(17, 17, 17, 0.08);
+}
+
+.session-batch-select.is-selected .session-batch-select-overlay {
+  background: rgba(17, 17, 17, 0.2);
+}
+
+.session-batch-select.is-selected:hover .session-batch-select-overlay {
+  background: rgba(17, 17, 17, 0.2);
 }
 
 .session-font-preview-frame {
-  padding: 28px;
+  padding: 50px 56px;
   align-items: stretch;
+}
+
+.session-font-preview-actions .session-icon-image,
+.session-font-preview-actions .session-submit-icon {
+  width: 168px;
+  height: 168px;
+}
+
+.session-font-preview-action-button {
+  height: 168px;
 }
 
 .session-font-preview-textarea {
   width: 100%;
   height: 100%;
   border: 0;
+  padding: 0 20px;
   resize: none;
   outline: none;
-  font-size: clamp(84px, 13vw, 192px);
+  font-size: clamp(126px, 19.5vw, 288px);
   line-height: 1.15;
   background: transparent;
   color: var(--session-icon-color);
+  caret-color: var(--session-icon-color);
+  caret-shape: bar;
+}
+
+.session-review-frame,
+.session-review-actions,
+.session-batch-frame,
+.session-font-preview-frame {
+  user-select: none;
 }
 
 .workspace-grid {
@@ -665,7 +694,7 @@ textarea {
   aspect-ratio: 1;
   display: block;
   background: transparent;
-  border: 0.5px solid #000;
+  border: 0.5px solid var(--app-ink);
   touch-action: none;
   cursor: crosshair;
 }
@@ -689,7 +718,7 @@ textarea {
 }
 
 .brush-control select {
-  border: 1px solid #000;
+  border: 1px solid var(--app-ink);
   background: #fff;
   padding: 6px 8px;
 }
@@ -723,23 +752,23 @@ textarea {
 input {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid #000;
+  border: 1px solid var(--app-ink);
   background: #fff;
-  color: #000;
+  color: var(--app-ink);
 }
 
 textarea {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid #000;
+  border: 1px solid var(--app-ink);
   background: #fff;
-  color: #000;
+  color: var(--app-ink);
   resize: vertical;
 }
 
 .button {
-  border: 1px solid #000;
-  background: #000;
+  border: 1px solid var(--app-ink);
+  background: var(--app-ink);
   color: #fff;
   padding: 10px 12px;
   cursor: pointer;
@@ -747,7 +776,7 @@ textarea {
 
 .button-secondary {
   background: #fff;
-  color: #000;
+  color: var(--app-ink);
 }
 
 .button:disabled {
@@ -922,9 +951,6 @@ textarea {
     padding: 0;
   }
 
-  .session-batch-grid {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 720px) {

@@ -64,7 +64,7 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [postBatchStage, setPostBatchStage] = useState<"grid" | "preview">("grid");
-  const [previewText, setPreviewText] = useState("the quick brown fox");
+  const [previewText, setPreviewText] = useState("the quick brown fox jumped over the lazy dog");
   const [previewFontBlob, setPreviewFontBlob] = useState<Blob | null>(null);
   const [seedReferences, setSeedReferences] = useState<SeedReference[]>([]);
   const [selectedBatchLetters, setSelectedBatchLetters] = useState<string[]>([]);
@@ -72,15 +72,25 @@ export default function App() {
   const [brushSize, setBrushSize] = useState(16);
   const [drawStageTab, setDrawStageTab] = useState<"draw" | "vector" | "skeleton">("draw");
   const [drawTabsOpen, setDrawTabsOpen] = useState(false);
+  const [reviewTabsOpen, setReviewTabsOpen] = useState(false);
   const [reviewTab, setReviewTab] = useState<"skeleton" | "vector" | "final">("skeleton");
   const [interpretedVectorImage, setInterpretedVectorImage] = useState("");
   const [finalRenderImage, setFinalRenderImage] = useState("");
   const [isPreparingReviewArtifacts, setIsPreparingReviewArtifacts] = useState(false);
   const sessionCanvasRef = useRef<DrawingCanvasHandle | null>(null);
+  const previewTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const handledRegenerationRef = useRef("");
   const hydratedRunIdRef = useRef("");
   const hydratingRunIdRef = useRef("");
   const isAwaitingEditPrompt = session?.status === "awaiting_hermes_edit_prompt";
+  const isHydratingReviewRun = Boolean(
+    sessionId &&
+    session?.stage === "review" &&
+    session?.status === "ready" &&
+    session?.latest_run_id &&
+    !batchResult &&
+    !result,
+  );
   const skeletonPreviewImage = skeletonPreview?.skeleton_image_data_url || session?.skeleton_image_data_url || "";
   const strokeCount = drawingData?.strokes.length ?? 0;
   const pointCount = drawingData?.strokes.reduce((count, stroke) => count + stroke.points.length, 0) ?? 0;
@@ -212,30 +222,43 @@ export default function App() {
   }
 
   const reviewTabs = (
-    <div className="session-frame-tabs">
-      <button
-        type="button"
-        className={`session-view-toggle-button${reviewTab === "skeleton" ? " is-active" : ""}`}
-        onClick={() => setReviewTab("skeleton")}
-      >
-        AI Generated
-      </button>
-      <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
-      <button
-        type="button"
-        className={`session-view-toggle-button${reviewTab === "vector" ? " is-active" : ""}`}
-        onClick={() => setReviewTab("vector")}
-      >
-        Interpreted Vector
-      </button>
-      <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
-      <button
-        type="button"
-        className={`session-view-toggle-button${reviewTab === "final" ? " is-active" : ""}`}
-        onClick={() => setReviewTab("final")}
-      >
-        Final
-      </button>
+    <div className={`session-frame-tabs-shell ${reviewTabsOpen ? "is-open" : "is-collapsed"}`}>
+      {reviewTabsOpen ? (
+        <div className="session-frame-tabs">
+          <button
+            type="button"
+            className={`session-view-toggle-button${reviewTab === "skeleton" ? " is-active" : ""}`}
+            onClick={() => setReviewTab("skeleton")}
+          >
+            A
+          </button>
+          <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
+          <button
+            type="button"
+            className={`session-view-toggle-button${reviewTab === "vector" ? " is-active" : ""}`}
+            onClick={() => setReviewTab("vector")}
+          >
+            V
+          </button>
+          <button
+            type="button"
+            className="session-frame-toggle-button"
+            aria-label="Close view controls"
+            onClick={() => setReviewTabsOpen(false)}
+          >
+            -
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="session-frame-toggle-button"
+          aria-label="Open view controls"
+          onClick={() => setReviewTabsOpen(true)}
+        >
+          +
+        </button>
+      )}
     </div>
   );
 
@@ -243,6 +266,29 @@ export default function App() {
     if (!sessionId) {
       return;
     }
+
+    hydratedRunIdRef.current = "";
+    hydratingRunIdRef.current = "";
+    handledRegenerationRef.current = "";
+    setResult(null);
+    setBatchResult(null);
+    setSkeletonPreview(null);
+    setSkeletonPreviewSignature("");
+    setInterpretedVectorImage("");
+    setFinalRenderImage("");
+    setSeedReferences([]);
+    setSelectedBatchLetters([]);
+    setNormalizedExportGlyphs([]);
+    setReferenceBlob(null);
+    setDrawingData(null);
+    setPreviewFontBlob(null);
+    setPostBatchStage("grid");
+    setReviewTab("skeleton");
+    setDrawStageTab("draw");
+    setDrawTabsOpen(false);
+    setReviewTabsOpen(false);
+    setErrorMessage("");
+    setSessionError("");
 
     let isActive = true;
     void fetchSession(sessionId)
@@ -330,6 +376,27 @@ export default function App() {
       abortController.abort();
     };
   }, [sessionId, session?.stage, session?.status, session?.latest_run_id, result, batchResult]);
+
+  useEffect(() => {
+    if (postBatchStage !== "preview") {
+      return;
+    }
+
+    const textarea = previewTextareaRef.current;
+    if (!textarea) {
+      return;
+    }
+
+    const nextFrame = window.requestAnimationFrame(() => {
+      textarea.focus();
+      const end = textarea.value.length;
+      textarea.setSelectionRange(end, end);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(nextFrame);
+    };
+  }, [postBatchStage]);
 
   useEffect(() => {
     if (
@@ -705,6 +772,19 @@ export default function App() {
       setSourceCharacter(primarySeed.character);
       setTargetCharacter(effectiveTargetCharacter);
       setResult(nextResult);
+      setSession((current) => (
+        current
+          ? {
+              ...current,
+              status: "ready",
+              stage: "review",
+              source_character: primarySeed.character,
+              target_character: effectiveTargetCharacter,
+              latest_run_id: nextResult.run_id,
+              instruction: `Review the generated "${effectiveTargetCharacter}" glyph. Approve it if it looks right, or choose edit to request changes.`,
+            }
+          : current
+      ));
       setReviewTab("skeleton");
       setBatchResult(null);
       setDebugHistory((current) => [
@@ -931,7 +1011,7 @@ export default function App() {
           ) : batchResult ? (
             <section className="session-review-layout">
               {postBatchStage === "grid" ? (
-                <div className="session-stage-stack">
+                <div className="session-stage-stack session-stage-stack-wide">
                   <section className="session-review-frame session-batch-frame">
                     <div className="session-batch-grid">
                       {batchGridItems.map((item) => (
@@ -942,9 +1022,7 @@ export default function App() {
                             aria-label={`Select ${item.character}`}
                             onClick={() => toggleBatchLetterSelection(item.character)}
                           >
-                            {selectedBatchLetters.includes(item.character) || item.imageUrl ? (
-                              <img src={approveIcon} alt="" className="session-batch-select-icon" />
-                            ) : null}
+                            <span className="session-batch-select-overlay" aria-hidden="true" />
                           </button>
                           {item.imageUrl ? (
                             <img className="session-batch-image" src={item.imageUrl} alt={item.alt} />
@@ -953,14 +1031,12 @@ export default function App() {
                       ))}
                     </div>
                   </section>
-                  <div className="session-review-actions">
-                    <div className="session-review-actions-spacer" />
+                  <div className="session-review-actions session-review-actions-centered">
                     <div className="session-review-actions-trailing">
                       <button
                         type="button"
                         className="session-icon-button session-review-placeholder-button"
                         aria-label="Edit selected letters"
-                        disabled={selectedBatchLetters.length === 0}
                       >
                         <img src={redoIcon} alt="" className="session-icon-image" />
                       </button>
@@ -976,19 +1052,29 @@ export default function App() {
                   </div>
                 </div>
               ) : (
-                <div className="session-stage-stack">
+                <div className="session-stage-stack session-stage-stack-wide">
                   <section className="session-review-frame session-font-preview-frame">
                     <textarea
+                      ref={previewTextareaRef}
                       className="session-font-preview-textarea"
                       value={previewText}
                       onChange={(event) => setPreviewText(event.target.value)}
+                      onBlur={(event) => {
+                        const textarea = event.currentTarget;
+                        const selectionStart = textarea.selectionStart ?? textarea.value.length;
+                        const selectionEnd = textarea.selectionEnd ?? selectionStart;
+                        window.requestAnimationFrame(() => {
+                          textarea.focus();
+                          textarea.setSelectionRange(selectionStart, selectionEnd);
+                        });
+                      }}
                       style={{ fontFamily: `"${previewFontFamily}", serif` }}
                     />
                   </section>
-                  <div className="session-review-actions">
+                  <div className="session-review-actions session-review-actions-centered session-font-preview-actions">
                     <button
                       type="button"
-                      className="session-icon-button"
+                      className="session-icon-button session-font-preview-action-button"
                       onClick={handleBackToReviewSet}
                       aria-label="Back"
                     >
@@ -996,7 +1082,7 @@ export default function App() {
                     </button>
                     <button
                       type="button"
-                      className="session-submit-button session-review-approve-button"
+                      className="session-submit-button session-review-approve-button session-font-preview-action-button"
                       onClick={handleExportPartialFont}
                       aria-label="Download Font"
                     >
@@ -1006,7 +1092,15 @@ export default function App() {
                 </div>
               )}
             </section>
-          ) : session.stage === "review" && result ? (
+          ) : isHydratingReviewRun ? (
+            <section className="session-loading-layout">
+              <div className="session-loading-dots" aria-label="Loading">
+                <span>.</span>
+                <span>.</span>
+                <span>.</span>
+              </div>
+            </section>
+          ) : result ? (
             <section className="session-review-layout">
               <div className="session-stage-stack">
                 <section className="session-review-frame">
@@ -1033,10 +1127,7 @@ export default function App() {
                 </section>
 
                 {!isAwaitingEditPrompt ? (
-                  <div className="session-review-actions">
-                    <div className="session-current-letter">
-                      <span className="session-current-letter-value">"{result.target_character}"</span>
-                    </div>
+                  <div className="session-review-actions session-review-actions-centered">
                     <div className="session-review-actions-trailing">
                       <button
                         type="button"
