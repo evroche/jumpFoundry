@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse
 
 from app.core.config import get_backend_version
 from app.schemas.glyph import (
+    FontSessionEditRequest,
     FontSessionCreateRequest,
     FontSessionResponse,
     FontSessionUpdateRequest,
@@ -49,6 +50,13 @@ async def create_session(payload: FontSessionCreateRequest) -> FontSessionRespon
         latest_run_id=session.get("latest_run_id", ""),
         skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
         structural_mode=session.get("structural_mode", "stroke-path"),
+        selected_revision_characters=session.get("selected_revision_characters", []),
+        font_name=session.get("font_name", ""),
+        current_drawing_image_data_url=session.get("current_drawing_image_data_url", ""),
+        seed_references=session.get("seed_references", []),
+        batch_run_ids=session.get("batch_run_ids", []),
+        normalized_glyphs=session.get("normalized_glyphs", []),
+        font_file_data_url=session.get("font_file_data_url", ""),
     )
 
 
@@ -70,6 +78,13 @@ async def get_session(session_id: str) -> FontSessionResponse:
         latest_run_id=session.get("latest_run_id", ""),
         skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
         structural_mode=session.get("structural_mode", "stroke-path"),
+        selected_revision_characters=session.get("selected_revision_characters", []),
+        font_name=session.get("font_name", ""),
+        current_drawing_image_data_url=session.get("current_drawing_image_data_url", ""),
+        seed_references=session.get("seed_references", []),
+        batch_run_ids=session.get("batch_run_ids", []),
+        normalized_glyphs=session.get("normalized_glyphs", []),
+        font_file_data_url=session.get("font_file_data_url", ""),
     )
 
 
@@ -91,6 +106,13 @@ async def update_session(session_id: str, payload: FontSessionUpdateRequest) -> 
         latest_run_id=session.get("latest_run_id", ""),
         skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
         structural_mode=session.get("structural_mode", "stroke-path"),
+        selected_revision_characters=session.get("selected_revision_characters", []),
+        font_name=session.get("font_name", ""),
+        current_drawing_image_data_url=session.get("current_drawing_image_data_url", ""),
+        seed_references=session.get("seed_references", []),
+        batch_run_ids=session.get("batch_run_ids", []),
+        normalized_glyphs=session.get("normalized_glyphs", []),
+        font_file_data_url=session.get("font_file_data_url", ""),
     )
 
 
@@ -112,12 +134,19 @@ async def approve_session(session_id: str) -> FontSessionResponse:
         latest_run_id=session.get("latest_run_id", ""),
         skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
         structural_mode=session.get("structural_mode", "stroke-path"),
+        selected_revision_characters=session.get("selected_revision_characters", []),
+        font_name=session.get("font_name", ""),
+        current_drawing_image_data_url=session.get("current_drawing_image_data_url", ""),
+        seed_references=session.get("seed_references", []),
+        batch_run_ids=session.get("batch_run_ids", []),
+        normalized_glyphs=session.get("normalized_glyphs", []),
+        font_file_data_url=session.get("font_file_data_url", ""),
     )
 
 
 @router.post("/api/v1/sessions/{session_id}/edit-request", response_model=FontSessionResponse)
-async def request_session_edit(session_id: str) -> FontSessionResponse:
-    session = storage.request_session_edit(session_id)
+async def request_session_edit(session_id: str, payload: FontSessionEditRequest) -> FontSessionResponse:
+    session = storage.request_session_edit(session_id, payload.selected_revision_characters)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return FontSessionResponse(
@@ -133,6 +162,13 @@ async def request_session_edit(session_id: str) -> FontSessionResponse:
         latest_run_id=session.get("latest_run_id", ""),
         skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
         structural_mode=session.get("structural_mode", "stroke-path"),
+        selected_revision_characters=session.get("selected_revision_characters", []),
+        font_name=session.get("font_name", ""),
+        current_drawing_image_data_url=session.get("current_drawing_image_data_url", ""),
+        seed_references=session.get("seed_references", []),
+        batch_run_ids=session.get("batch_run_ids", []),
+        normalized_glyphs=session.get("normalized_glyphs", []),
+        font_file_data_url=session.get("font_file_data_url", ""),
     )
 
 
@@ -158,7 +194,7 @@ async def create_skeleton_preview(payload: SkeletonPreviewRequest) -> SkeletonPr
         {
             "status": "ready",
             "stage": "draw",
-            "instruction": "Review the structural skeleton before generating the next glyph.",
+            "instruction": "Review the structural skeleton before I generate the next glyph.",
             "source_character": payload.source_character.upper(),
             "target_character": payload.target_character.upper(),
             "skeleton_image_data_url": skeleton_image_data_url,

@@ -25,7 +25,49 @@ def register(ctx) -> None:
         handler=tools.get_fontsketch_session_status,
     )
     ctx.register_tool(
-        name="submit_fontsketch_revision",
+        name="advance_fontsketch_session",
+        toolset="fontsketch",
+        schema=schemas.ADVANCE_FONTSKETCH_SESSION,
+        handler=tools.advance_fontsketch_session,
+    )
+    ctx.register_tool(
+        name="generate_review_glyph",
+        toolset="fontsketch",
+        schema=schemas.GENERATE_FONTSKETCH_REVIEW_GLYPH,
+        handler=tools.generate_fontsketch_review_glyph,
+    )
+    ctx.register_tool(
+        name="generate_alphabet",
+        toolset="fontsketch",
+        schema=schemas.GENERATE_FONTSKETCH_ALPHABET_BATCH,
+        handler=tools.generate_fontsketch_alphabet_batch,
+    )
+    ctx.register_tool(
+        name="export_outline_svgs",
+        toolset="fontsketch",
+        schema=schemas.EXPORT_FONTSKETCH_OUTLINE_SET,
+        handler=tools.export_fontsketch_outline_set,
+    )
+    ctx.register_tool(
+        name="normalize_glyphs",
+        toolset="fontsketch",
+        schema=schemas.NORMALIZE_FONTSKETCH_GLYPHS,
+        handler=tools.normalize_fontsketch_glyphs,
+    )
+    ctx.register_tool(
+        name="set_font_name",
+        toolset="fontsketch",
+        schema=schemas.SET_FONTSKETCH_FONT_NAME,
+        handler=tools.set_fontsketch_font_name,
+    )
+    ctx.register_tool(
+        name="build_font_file",
+        toolset="fontsketch",
+        schema=schemas.BUILD_FONTSKETCH_FONT,
+        handler=tools.build_fontsketch_font,
+    )
+    ctx.register_tool(
+        name="apply_revision",
         toolset="fontsketch",
         schema=schemas.SUBMIT_FONTSKETCH_REVISION,
         handler=tools.submit_fontsketch_revision,

@@ -51,24 +51,44 @@ class RunStorage:
             session_id,
             {
                 "status": "awaiting_hermes_batch_confirmation",
-                "instruction": f'Ask whether to continue generating more glyphs after approving "{source_character}".',
+                "instruction": f'I recorded your approval of "{source_character}". Tell me if you want me to generate more glyphs.',
                 "source_character": source_character,
                 "target_character": target_character,
                 "skeleton_image_data_url": "",
+                "selected_revision_characters": [],
             },
         )
 
-    def request_session_edit(self, session_id: str) -> dict | None:
+    def request_session_edit(self, session_id: str, selected_revision_characters: list[str] | None = None) -> dict | None:
         current = self.read_session(session_id)
         if current is None:
             return None
 
+        selected = [
+            (character[:1] or "").upper()
+            for character in (selected_revision_characters or [])
+            if (character[:1] or "").isalpha()
+        ]
+        selected = list(dict.fromkeys(selected))
         target_character = (current.get("target_character") or "B").upper()
+        if selected:
+            instruction = (
+                f'You\'ve selected {", ".join(selected)} for revisions. '
+                "If you've already told me what to change, tell me to continue and I'll make those revisions. "
+                "Otherwise, tell me what to change."
+            )
+        else:
+            instruction = (
+                f'I\'m ready to revise "{target_character}". '
+                "If you've already told me what to change, tell me to continue and I'll make the revision. "
+                "Otherwise, tell me what to change."
+            )
         return self.update_session(
             session_id,
             {
                 "status": "awaiting_hermes_edit_prompt",
-                "instruction": f'Ask what should change about the "{target_character}" glyph before revising it. Once the user tells you, save the revision and regenerate that glyph.',
+                "instruction": instruction,
+                "selected_revision_characters": selected,
             },
         )
 
@@ -78,13 +98,20 @@ class RunStorage:
             "session_id": session_id,
             "status": "ready",
             "stage": "draw",
-            "instruction": 'We\'ll draw two letters and use this to generate the rest of the typeface.\n\nStart by drawing the letter "E".',
+            "instruction": 'I\'m ready with Fontsketch. We\'ll draw two letters and use them to generate the rest of the typeface.\n\nStart by drawing the letter "E".',
             "source_character": "E",
             "target_character": "E",
             "skeleton_image_data_url": "",
             "structural_mode": "stroke-path",
             "correction": "",
             "latest_run_id": "",
+            "selected_revision_characters": [],
+            "font_name": "",
+            "current_drawing_image_data_url": "",
+            "seed_references": [],
+            "batch_run_ids": [],
+            "normalized_glyphs": [],
+            "font_file_data_url": "",
             "created_at": datetime.now(UTC).isoformat(),
         }
 

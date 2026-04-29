@@ -23,7 +23,6 @@ export type DrawingViewMode = "draw" | "vector";
 type DrawingCanvasProps = {
   onExportReady: (blob: Blob | null) => void;
   onVectorChange?: (drawing: DrawingVectorData) => void;
-  initialDrawing?: DrawingVectorData | null;
   size?: number;
   brushSize?: number;
   onBrushSizeChange?: (value: number) => void;
@@ -44,7 +43,6 @@ const BRUSH_RENDER_SCALE = 1.832;
 export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(function DrawingCanvas({
   onExportReady,
   onVectorChange,
-  initialDrawing = null,
   size = CANVAS_SIZE,
   brushSize = 16,
   onBrushSizeChange,
@@ -54,7 +52,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
   overlay = null,
 }, ref) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [strokes, setStrokes] = useState<DrawingStroke[]>(() => initialDrawing?.strokes ?? []);
+  const [strokes, setStrokes] = useState<DrawingStroke[]>([]);
   const isDrawingRef = useRef(false);
   const currentStrokeRef = useRef<DrawingStroke | null>(null);
 

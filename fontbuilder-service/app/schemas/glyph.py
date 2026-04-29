@@ -42,6 +42,11 @@ class GlyphOutlineExportItem(BaseModel):
     image_data_url: str
 
 
+class SessionSeedReference(BaseModel):
+    character: str
+    image_data_url: str
+
+
 class GlyphOutlineExportRequest(BaseModel):
     session_id: str = ""
     glyphs: list[GlyphOutlineExportItem]
@@ -104,13 +109,20 @@ class FontSessionResponse(BaseModel):
     frontend_url: str
     status: str = "ready"
     stage: Literal["draw", "skeleton_preview", "review"] = "draw"
-    instruction: str = 'We\'ll draw two letters and use this to generate the rest of the typeface.\n\nStart by drawing the letter "E".'
+    instruction: str = 'I\'m ready with Fontsketch. We\'ll draw two letters and use them to generate the rest of the typeface.\n\nStart by drawing the letter "E".'
     source_character: str = "E"
     target_character: str = "E"
     correction: str = ""
     latest_run_id: str = ""
     skeleton_image_data_url: str = ""
     structural_mode: StructuralMode = "stroke-path"
+    selected_revision_characters: list[str] = []
+    font_name: str = ""
+    current_drawing_image_data_url: str = ""
+    seed_references: list[SessionSeedReference] = []
+    batch_run_ids: list[str] = []
+    normalized_glyphs: list[GlyphOutlineExportItem] = []
+    font_file_data_url: str = ""
 
 
 class FontSessionUpdateRequest(BaseModel):
@@ -123,3 +135,14 @@ class FontSessionUpdateRequest(BaseModel):
     skeleton_image_data_url: str | None = None
     structural_mode: StructuralMode | None = None
     status: str | None = None
+    selected_revision_characters: list[str] | None = None
+    font_name: str | None = None
+    current_drawing_image_data_url: str | None = None
+    seed_references: list[SessionSeedReference] | None = None
+    batch_run_ids: list[str] | None = None
+    normalized_glyphs: list[GlyphOutlineExportItem] | None = None
+    font_file_data_url: str | None = None
+
+
+class FontSessionEditRequest(BaseModel):
+    selected_revision_characters: list[str] = []

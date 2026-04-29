@@ -93,8 +93,152 @@ GET_FONTSKETCH_SESSION_STATUS = {
 }
 
 
+ADVANCE_FONTSKETCH_SESSION = {
+    "name": "advance_fontsketch_session",
+    "description": (
+        "Advance the current local Fontsketch session to its next step. "
+        "Use when the user says they are done with the current step and wants Hermes to move Fontsketch forward."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Optional specific Fontsketch session id. If omitted, use the most recently updated local session.",
+                "default": "",
+            },
+        },
+        "required": [],
+    },
+}
+
+
+GENERATE_FONTSKETCH_REVIEW_GLYPH = {
+    "name": "generate_review_glyph",
+    "description": (
+        "Generate the first review glyph for the current Fontsketch session from the two drawn seed letters. "
+        "Use when the user finishes drawing the second seed letter and wants the review glyph generated."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Optional specific Fontsketch session id. If omitted, use the most recently updated local session.",
+                "default": "",
+            },
+        },
+        "required": [],
+    },
+}
+
+
+GENERATE_FONTSKETCH_ALPHABET_BATCH = {
+    "name": "generate_alphabet",
+    "description": (
+        "Generate the next batch of alphabet glyphs for the current Fontsketch session after the first review glyph is approved."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Optional specific Fontsketch session id. If omitted, use the most recently updated local session.",
+                "default": "",
+            },
+        },
+        "required": [],
+    },
+}
+
+
+EXPORT_FONTSKETCH_OUTLINE_SET = {
+    "name": "export_outline_svgs",
+    "description": (
+        "Convert the current Fontsketch glyph set into outline SVGs and save the outline archive for the current session."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Optional specific Fontsketch session id. If omitted, use the most recently updated local session.",
+                "default": "",
+            },
+        },
+        "required": [],
+    },
+}
+
+
+NORMALIZE_FONTSKETCH_GLYPHS = {
+    "name": "normalize_glyphs",
+    "description": (
+        "Trim and normalize the current Fontsketch glyph set so it is ready to be compiled into a font."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Optional specific Fontsketch session id. If omitted, use the most recently updated local session.",
+                "default": "",
+            },
+        },
+        "required": [],
+    },
+}
+
+
+SET_FONTSKETCH_FONT_NAME = {
+    "name": "set_font_name",
+    "description": (
+        "Save the user's chosen font name for the current Fontsketch session and open the final preview. "
+        "Use when Fontsketch asks what name to give the font."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Optional specific Fontsketch session id. If omitted, use the most recently updated local session.",
+                "default": "",
+            },
+            "font_name": {
+                "type": "string",
+                "description": "The font name chosen by the user.",
+            },
+        },
+        "required": ["font_name"],
+    },
+}
+
+
+BUILD_FONTSKETCH_FONT = {
+    "name": "build_font_file",
+    "description": (
+        "Compile the normalized Fontsketch glyphs into a downloadable font file for the current session."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Optional specific Fontsketch session id. If omitted, use the most recently updated local session.",
+                "default": "",
+            },
+            "font_name": {
+                "type": "string",
+                "description": "The font name chosen by the user.",
+            },
+        },
+        "required": ["font_name"],
+    },
+}
+
+
 SUBMIT_FONTSKETCH_REVISION = {
-    "name": "submit_fontsketch_revision",
+    "name": "apply_revision",
     "description": (
         "Save a revision request for the current Fontsketch glyph review session. "
         "Use after the user has clicked edit and described what should change."

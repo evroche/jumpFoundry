@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import base64
 import json
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+import time
 import urllib.error
 import urllib.request
 
 from .service.models import ImageSearchRequest
 from .service.search import search_images as run_search
+
+
+BACKEND_BASE_URL = "http://127.0.0.1:8200"
 
 
 def search_images(args: dict, **kwargs) -> str:
@@ -24,6 +29,179 @@ def search_images(args: dict, **kwargs) -> str:
         return json.dumps(result.model_dump())
     except Exception as exc:
         return json.dumps({"error": str(exc)})
+
+
+def _sessions_dir() -> Path:
+    return (
+        Path.home()
+        / "PycharmProjects"
+        / "fontbuilder"
+        / "fontbuilder-service"
+        / "runs"
+        / "sessions"
+    )
+
+
+def _read_full_session(requested_session_id: str = "") -> dict:
+    sessions_dir = _sessions_dir()
+    if not sessions_dir.exists():
+        return {"error": f"Fontsketch sessions directory not found at {sessions_dir}"}
+
+    session_path: Path | None = None
+    if requested_session_id:
+        candidate = sessions_dir / f"{requested_session_id}.json"
+        if candidate.exists():
+            session_path = candidate
+        else:
+            return {"error": f"Fontsketch session {requested_session_id} was not found."}
+    else:
+        session_files = list(sessions_dir.glob("*.json"))
+        if not session_files:
+            return {"error": "No local Fontsketch sessions were found."}
+        session_path = max(session_files, key=lambda path: path.stat().st_mtime)
+
+    payload = json.loads(session_path.read_text(encoding="utf-8"))
+    payload["_updated_at"] = datetime.fromtimestamp(session_path.stat().st_mtime).isoformat()
+    return payload
+
+
+def _json_request(url: str, *, method: str = "GET", payload: dict | None = None, timeout: float = 30.0) -> dict:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8") if payload is not None else None,
+        headers={"Content-Type": "application/json"} if payload is not None else {},
+        method=method,
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        raw = response.read().decode("utf-8")
+    return json.loads(raw) if raw else {}
+
+
+def _binary_request(url: str, *, payload: dict, timeout: float = 60.0) -> bytes:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read()
+
+
+def _patch_session(session_id: str, payload: dict) -> dict:
+    return _json_request(
+        f"{BACKEND_BASE_URL}/api/v1/sessions/{session_id}",
+        method="PATCH",
+        payload=payload,
+        timeout=10.0,
+    )
+
+
+def _load_run(run_id: str) -> dict:
+    return _json_request(f"{BACKEND_BASE_URL}/api/v1/runs/{run_id}", timeout=30.0)
+
+
+def _normalize_letter(value: str, fallback: str = "A") -> str:
+    normalized = (value[:1] or fallback).upper()
+    return normalized if normalized.isalpha() else fallback
+
+
+def _next_alphabet_character(character: str) -> str:
+    normalized = _normalize_letter(character, "A")
+    if normalized == "Z":
+        return "A"
+    return chr(ord(normalized) + 1)
+
+
+def _data_url_to_bytes(data_url: str) -> bytes:
+    if "," not in data_url:
+        return b""
+    header, payload = data_url.split(",", 1)
+    if ";base64" in header:
+        return base64.b64decode(payload)
+    return payload.encode("utf-8")
+
+
+def _session_export_glyphs(session_payload: dict) -> list[dict[str, str]]:
+    glyph_map: dict[str, dict[str, str]] = {}
+    for seed in session_payload.get("seed_references", []) or []:
+        character = _normalize_letter(seed.get("character", "A"))
+        image_data_url = seed.get("image_data_url", "")
+        if image_data_url:
+            glyph_map[character] = {"character": character, "image_data_url": image_data_url}
+
+    latest_run_id = (session_payload.get("latest_run_id") or "").strip()
+    if latest_run_id:
+        run = _load_run(latest_run_id)
+        image_data_url = run.get("generated_image_data_url", "")
+        if image_data_url:
+            glyph_map[_normalize_letter(run.get("target_character", "A"))] = {
+                "character": _normalize_letter(run.get("target_character", "A")),
+                "image_data_url": image_data_url,
+            }
+
+    for run_id in session_payload.get("batch_run_ids", []) or []:
+        run = _load_run(run_id)
+        image_data_url = run.get("generated_image_data_url", "")
+        if image_data_url:
+            glyph_map[_normalize_letter(run.get("target_character", "A"))] = {
+                "character": _normalize_letter(run.get("target_character", "A")),
+                "image_data_url": image_data_url,
+            }
+
+    return [glyph_map[key] for key in sorted(glyph_map.keys())]
+
+
+def _multipart_generate_request(
+    *,
+    session_id: str,
+    primary_seed: dict,
+    secondary_seed: dict | None,
+    source_character: str,
+    target_character: str,
+    correction: str,
+    previous_run_id: str,
+    brush_size: int = 16,
+) -> dict:
+    boundary = "----FontsketchGlyphGeneration"
+    body_parts: list[bytes] = []
+
+    def add_field(name: str, value: str) -> None:
+        body_parts.extend([
+            f"--{boundary}\r\n".encode("utf-8"),
+            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"),
+            value.encode("utf-8"),
+            b"\r\n",
+        ])
+
+    def add_file(name: str, filename: str, content_type: str, content: bytes) -> None:
+        body_parts.extend([
+            f"--{boundary}\r\n".encode("utf-8"),
+            f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'.encode("utf-8"),
+            f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"),
+            content,
+            b"\r\n",
+        ])
+
+    add_file("reference_glyph", "reference_glyph.png", "image/png", _data_url_to_bytes(primary_seed.get("image_data_url", "")))
+    if secondary_seed and secondary_seed.get("image_data_url"):
+        add_file("second_reference_glyph", "second_reference_glyph.png", "image/png", _data_url_to_bytes(secondary_seed.get("image_data_url", "")))
+        add_field("second_source_character", _normalize_letter(secondary_seed.get("character", "S"), "S"))
+    add_field("source_character", source_character)
+    add_field("target_character", target_character)
+    add_field("correction", correction)
+    add_field("previous_run_id", previous_run_id)
+    add_field("session_id", session_id)
+    add_field("generation_mode", "final")
+    add_field("brush_size", str(brush_size))
+    request = urllib.request.Request(
+        f"{BACKEND_BASE_URL}/api/v1/generate",
+        data=b"".join(body_parts + [f"--{boundary}--\r\n".encode("utf-8")]),
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=180) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 def start_fontsketch_session(args: dict, **kwargs) -> str:
@@ -85,41 +263,314 @@ def start_fontsketch_session(args: dict, **kwargs) -> str:
 
 
 def get_fontsketch_session_status(args: dict, **kwargs) -> str:
-    requested_session_id = (args.get("session_id") or "").strip()
-    sessions_dir = (
-        Path.home()
-        / "PycharmProjects"
-        / "fontbuilder"
-        / "fontbuilder-service"
-        / "runs"
-        / "sessions"
-    )
-    if not sessions_dir.exists():
-        return json.dumps({"error": f"Fontsketch sessions directory not found at {sessions_dir}"})
-
-    session_path: Path | None = None
-    if requested_session_id:
-        candidate = sessions_dir / f"{requested_session_id}.json"
-        if candidate.exists():
-            session_path = candidate
-        else:
-            return json.dumps({"error": f"Fontsketch session {requested_session_id} was not found."})
-    else:
-        session_files = list(sessions_dir.glob("*.json"))
-        if not session_files:
-            return json.dumps({"error": "No local Fontsketch sessions were found."})
-        session_path = max(session_files, key=lambda path: path.stat().st_mtime)
-
-    payload = json.loads(session_path.read_text(encoding="utf-8"))
+    payload = _read_full_session((args.get("session_id") or "").strip())
+    if payload.get("error"):
+        return json.dumps(payload)
     return json.dumps(
         {
-            "session_id": payload.get("session_id", session_path.stem),
+            "session_id": payload.get("session_id", ""),
             "stage": payload.get("stage", "draw"),
             "status": payload.get("status", "ready"),
             "instruction": payload.get("instruction", ""),
             "source_character": payload.get("source_character", ""),
             "target_character": payload.get("target_character", ""),
-            "updated_at": datetime.fromtimestamp(session_path.stat().st_mtime).isoformat(),
+            "selected_revision_characters": payload.get("selected_revision_characters", []),
+            "font_name": payload.get("font_name", ""),
+            "updated_at": payload.get("_updated_at", ""),
+        }
+    )
+
+
+def advance_fontsketch_session(args: dict, **kwargs) -> str:
+    session_payload = json.loads(get_fontsketch_session_status({"session_id": args.get("session_id", "")}))
+    if session_payload.get("error"):
+        return json.dumps(session_payload)
+
+    session_id = session_payload["session_id"]
+    request = urllib.request.Request(
+        f"{BACKEND_BASE_URL}/api/v1/sessions/{session_id}",
+        data=json.dumps(
+            {
+                "status": "advance_requested",
+                "instruction": "I am moving Fontsketch to the next step now.",
+            }
+        ).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="PATCH",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10):
+            pass
+    except urllib.error.URLError as exc:
+        return json.dumps({"error": f"Failed to advance Fontsketch session: {exc}"})
+
+    for _ in range(20):
+        time.sleep(0.5)
+        next_payload = json.loads(get_fontsketch_session_status({"session_id": session_id}))
+        if next_payload.get("error"):
+            return json.dumps(next_payload)
+        if next_payload.get("status") != "advance_requested":
+            return json.dumps(next_payload)
+
+    return json.dumps(
+        {
+            "session_id": session_id,
+            "status": "advance_requested",
+            "instruction": "I am moving Fontsketch to the next step now.",
+        }
+    )
+
+
+def generate_fontsketch_review_glyph(args: dict, **kwargs) -> str:
+    session_payload = _read_full_session((args.get("session_id") or "").strip())
+    if session_payload.get("error"):
+        return json.dumps(session_payload)
+
+    session_id = session_payload["session_id"]
+    seed_references = session_payload.get("seed_references", []) or []
+    current_drawing = session_payload.get("current_drawing_image_data_url", "")
+    if len(seed_references) < 1 or not current_drawing:
+        return json.dumps({"error": "Fontsketch needs the first seed and the current drawing before I can generate the review glyph."})
+
+    primary_seed = seed_references[0]
+    secondary_seed = seed_references[1] if len(seed_references) > 1 else {
+        "character": session_payload.get("source_character", "S"),
+        "image_data_url": current_drawing,
+    }
+    source_character = _normalize_letter(primary_seed.get("character", session_payload.get("source_character", "E")))
+    target_character = _next_alphabet_character(source_character)
+    _patch_session(
+        session_id,
+        {
+            "status": "generating_single",
+            "instruction": f'Based on the two characters you provided, I am now generating a sample of the letter "{target_character}" for you to review.',
+            "selected_revision_characters": [],
+        },
+    )
+
+    try:
+        payload = _multipart_generate_request(
+            session_id=session_id,
+            primary_seed=primary_seed,
+            secondary_seed=secondary_seed,
+            source_character=source_character,
+            target_character=target_character,
+            correction="",
+            previous_run_id="",
+            brush_size=16,
+        )
+    except urllib.error.URLError as exc:
+        return json.dumps({"error": f"Failed to generate Fontsketch review glyph: {exc}"})
+
+    _patch_session(
+        session_id,
+        {
+            "seed_references": [
+                {
+                    "character": source_character,
+                    "image_data_url": primary_seed.get("image_data_url", ""),
+                },
+                {
+                    "character": _normalize_letter(secondary_seed.get("character", session_payload.get("source_character", "S")), "S"),
+                    "image_data_url": secondary_seed.get("image_data_url", ""),
+                },
+            ],
+            "batch_run_ids": [],
+            "normalized_glyphs": [],
+            "font_file_data_url": "",
+        },
+    )
+    next_session = json.loads(get_fontsketch_session_status({"session_id": session_id}))
+    return json.dumps(
+        {
+            "session_id": session_id,
+            "run_id": payload.get("run_id", ""),
+            "status": next_session.get("status", "ready"),
+            "instruction": next_session.get("instruction", ""),
+            "target_character": payload.get("target_character", target_character),
+        }
+    )
+
+
+def generate_fontsketch_alphabet_batch(args: dict, **kwargs) -> str:
+    session_payload = _read_full_session((args.get("session_id") or "").strip())
+    if session_payload.get("error"):
+        return json.dumps(session_payload)
+
+    session_id = session_payload["session_id"]
+    seed_references = session_payload.get("seed_references", []) or []
+    latest_run_id = (session_payload.get("latest_run_id") or "").strip()
+    if len(seed_references) < 2 or not latest_run_id:
+        return json.dumps({"error": "Fontsketch needs both seed letters and an approved review glyph before I can generate the alphabet batch."})
+
+    primary_seed = seed_references[0]
+    secondary_seed = seed_references[1]
+    approved_run = _load_run(latest_run_id)
+    approved_character = _normalize_letter(approved_run.get("target_character", session_payload.get("target_character", "F")), "F")
+    next_targets = [_next_alphabet_character(approved_character)]
+    next_targets.append(_next_alphabet_character(next_targets[-1]))
+    next_targets.append(_next_alphabet_character(next_targets[-1]))
+    _patch_session(
+        session_id,
+        {
+            "status": "generating_batch",
+            "instruction": "I am now generating the rest of the alphabet.",
+            "selected_revision_characters": [],
+        },
+    )
+
+    boundary = "----FontsketchGlyphBatch"
+    body_parts: list[bytes] = []
+
+    def add_field(name: str, value: str) -> None:
+        body_parts.extend([
+            f"--{boundary}\r\n".encode("utf-8"),
+            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"),
+            value.encode("utf-8"),
+            b"\r\n",
+        ])
+
+    def add_file(name: str, filename: str, content_type: str, content: bytes) -> None:
+        body_parts.extend([
+            f"--{boundary}\r\n".encode("utf-8"),
+            f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'.encode("utf-8"),
+            f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"),
+            content,
+            b"\r\n",
+        ])
+
+    add_file("reference_glyph", "reference_glyph.png", "image/png", _data_url_to_bytes(primary_seed.get("image_data_url", "")))
+    add_field("source_character", _normalize_letter(primary_seed.get("character", "E")))
+    add_field("target_characters", ",".join(next_targets))
+    add_field("accepted_run_id", latest_run_id)
+    add_field("correction", "")
+    request = urllib.request.Request(
+        f"{BACKEND_BASE_URL}/api/v1/generate-many",
+        data=b"".join(body_parts + [f"--{boundary}--\r\n".encode("utf-8")]),
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.URLError as exc:
+        return json.dumps({"error": f"Failed to generate Fontsketch alphabet batch: {exc}"})
+
+    items = payload.get("items", [])
+    batch_run_ids = [item.get("run_id", "") for item in items if item.get("run_id")]
+    updated_session = _patch_session(
+        session_id,
+        {
+            "status": "ready",
+            "stage": "review",
+            "instruction": "The alphabet board is ready. If you'd like to request changes, select the letters you'd like to revise and let me know when you're ready. If everything looks good, tell me and I'll continue.",
+            "source_character": approved_character,
+            "target_character": next_targets[0] if next_targets else _next_alphabet_character(approved_character),
+            "batch_run_ids": batch_run_ids,
+            "selected_revision_characters": [],
+            "normalized_glyphs": [],
+            "font_file_data_url": "",
+        },
+    )
+    return json.dumps(
+        {
+            "session_id": session_id,
+            "status": updated_session.get("status", "ready"),
+            "instruction": updated_session.get("instruction", ""),
+            "target_characters": next_targets,
+            "batch_run_ids": batch_run_ids,
+        }
+    )
+
+
+def export_fontsketch_outline_set(args: dict, **kwargs) -> str:
+    session_payload = _read_full_session((args.get("session_id") or "").strip())
+    if session_payload.get("error"):
+        return json.dumps(session_payload)
+
+    glyphs = _session_export_glyphs(session_payload)
+    if not glyphs:
+        return json.dumps({"error": "No Fontsketch glyphs are available to convert to SVG outlines yet."})
+
+    session_id = session_payload["session_id"]
+    _patch_session(
+        session_id,
+        {
+            "status": "exporting_outlines",
+            "instruction": "I am converting your glyphs to SVG outlines now.",
+            "selected_revision_characters": [],
+        },
+    )
+    try:
+        archive_bytes = _binary_request(
+            f"{BACKEND_BASE_URL}/api/v1/export-outline-set",
+            payload={"session_id": session_id, "glyphs": glyphs},
+            timeout=120.0,
+        )
+    except urllib.error.URLError as exc:
+        return json.dumps({"error": f"Failed to export Fontsketch outline set: {exc}"})
+
+    updated_session = _patch_session(
+        session_id,
+        {
+            "instruction": "I converted the current glyphs to SVG outlines. Next I will trim and normalize them for the font build.",
+            "selected_revision_characters": [],
+        },
+    )
+    return json.dumps(
+        {
+            "session_id": session_id,
+            "status": updated_session.get("status", "ready"),
+            "instruction": updated_session.get("instruction", ""),
+            "outline_archive_bytes": len(archive_bytes),
+            "glyph_count": len(glyphs),
+        }
+    )
+
+
+def normalize_fontsketch_glyphs(args: dict, **kwargs) -> str:
+    session_payload = _read_full_session((args.get("session_id") or "").strip())
+    if session_payload.get("error"):
+        return json.dumps(session_payload)
+
+    glyphs = _session_export_glyphs(session_payload)
+    if not glyphs:
+        return json.dumps({"error": "No Fontsketch glyphs are available to normalize yet."})
+
+    session_id = session_payload["session_id"]
+    _patch_session(
+        session_id,
+        {
+            "status": "normalizing_glyphs",
+            "instruction": "I am trimming and formatting your glyphs now so I can compile the font.",
+            "selected_revision_characters": [],
+        },
+    )
+    try:
+        payload = _json_request(
+            f"{BACKEND_BASE_URL}/api/v1/normalize-glyph-set",
+            method="POST",
+            payload={"session_id": session_id, "glyphs": glyphs},
+            timeout=120.0,
+        )
+    except urllib.error.URLError as exc:
+        return json.dumps({"error": f"Failed to normalize Fontsketch glyphs: {exc}"})
+
+    updated_session = _patch_session(
+        session_id,
+        {
+            "status": "awaiting_font_name",
+            "instruction": "Now I'll compile your font and prepare it for download. What name would you like to give your font?",
+            "normalized_glyphs": payload.get("glyphs", []),
+            "selected_revision_characters": [],
+        },
+    )
+    return json.dumps(
+        {
+            "session_id": session_id,
+            "status": updated_session.get("status", "awaiting_font_name"),
+            "instruction": updated_session.get("instruction", ""),
+            "glyph_count": len(payload.get("glyphs", [])),
         }
     )
 
@@ -129,35 +580,202 @@ def submit_fontsketch_revision(args: dict, **kwargs) -> str:
     if not correction:
         return json.dumps({"error": "A non-empty correction is required."})
 
+    session_payload = _read_full_session((args.get("session_id") or "").strip())
+    if session_payload.get("error"):
+        return json.dumps(session_payload)
+
+    session_id = session_payload["session_id"]
+    target_letters = session_payload.get("selected_revision_characters", []) or [session_payload.get("target_character", "")]
+    try:
+        updated_payload = _patch_session(
+            session_id,
+            {
+                "status": "regenerate_requested",
+                "correction": correction,
+                "instruction": f'I am applying that change to {", ".join([_normalize_letter(letter, "") for letter in target_letters if letter])} now.',
+            },
+        )
+    except urllib.error.URLError as exc:
+        return json.dumps({"error": f"Failed to update Fontsketch session: {exc}"})
+
+    seed_references = session_payload.get("seed_references", []) or []
+    if len(seed_references) < 2:
+        return json.dumps({"error": "Fontsketch needs both seed letters before I can apply that revision."})
+
+    primary_seed = seed_references[0]
+    secondary_seed = seed_references[1]
+    source_character = _normalize_letter(primary_seed.get("character", session_payload.get("source_character", "E")))
+    latest_run_id = (session_payload.get("latest_run_id") or "").strip()
+    batch_run_ids = session_payload.get("batch_run_ids", []) or []
+
+    try:
+      if session_payload.get("selected_revision_characters"):
+          revised_runs: list[dict] = []
+          existing_runs_by_character: dict[str, str] = {}
+          if latest_run_id:
+              latest_run = _load_run(latest_run_id)
+              existing_runs_by_character[_normalize_letter(latest_run.get("target_character", ""), "")] = latest_run_id
+          for run_id in batch_run_ids:
+              run = _load_run(run_id)
+              existing_runs_by_character[_normalize_letter(run.get("target_character", ""), "")] = run_id
+
+          for character in [_normalize_letter(letter, "") for letter in target_letters if letter]:
+              revised_runs.append(
+                  _multipart_generate_request(
+                      session_id=session_id,
+                      primary_seed=primary_seed,
+                      secondary_seed=secondary_seed,
+                      source_character=source_character,
+                      target_character=character,
+                      correction=correction,
+                      previous_run_id=existing_runs_by_character.get(character, ""),
+                      brush_size=16,
+                  )
+              )
+
+          revised_by_character = {
+              _normalize_letter(run.get("target_character", ""), ""): run.get("run_id", "")
+              for run in revised_runs
+              if run.get("run_id")
+          }
+          next_batch_run_ids: list[str] = []
+          latest_character = ""
+          if latest_run_id:
+              latest_run = _load_run(latest_run_id)
+              latest_character = _normalize_letter(latest_run.get("target_character", ""), "")
+          if latest_character and revised_by_character.get(latest_character):
+              latest_run_id = revised_by_character[latest_character]
+          for run_id in batch_run_ids:
+              run = _load_run(run_id)
+              character = _normalize_letter(run.get("target_character", ""), "")
+              next_batch_run_ids.append(revised_by_character.get(character, run_id))
+
+          final_session = _patch_session(
+              session_id,
+              {
+                  "status": "ready",
+                  "stage": "review",
+                  "latest_run_id": latest_run_id,
+                  "batch_run_ids": next_batch_run_ids,
+                  "selected_revision_characters": [],
+                  "instruction": f'I\'ve generated a revision for {", ".join([_normalize_letter(letter, "") for letter in target_letters if letter])}. Let me know if it looks good or if you\'d like another revision.',
+              },
+          )
+      else:
+          target_character = _normalize_letter(session_payload.get("target_character", "F"), "F")
+          payload = _multipart_generate_request(
+              session_id=session_id,
+              primary_seed=primary_seed,
+              secondary_seed=secondary_seed,
+              source_character=source_character,
+              target_character=target_character,
+              correction=correction,
+              previous_run_id=latest_run_id,
+              brush_size=16,
+          )
+          final_session = _patch_session(
+              session_id,
+              {
+                  "status": "ready",
+                  "stage": "review",
+                  "latest_run_id": payload.get("run_id", latest_run_id),
+                  "selected_revision_characters": [],
+                  "instruction": f'I\'ve generated a revision for {target_character}. Let me know if it looks good or if you\'d like another revision.',
+              },
+          )
+    except urllib.error.URLError as exc:
+        return json.dumps({"error": f"Failed to apply Fontsketch revision: {exc}"})
+
+    return json.dumps(
+        {
+            "session_id": session_id,
+            "status": final_session.get("status", "ready"),
+            "instruction": final_session.get("instruction", ""),
+            "correction": correction,
+        }
+    )
+
+
+def set_fontsketch_font_name(args: dict, **kwargs) -> str:
+    font_name = (args.get("font_name") or "").strip()
+    if not font_name:
+        return json.dumps({"error": "A non-empty font_name is required."})
+
     session_payload = json.loads(get_fontsketch_session_status({"session_id": args.get("session_id", "")}))
     if session_payload.get("error"):
         return json.dumps(session_payload)
 
     session_id = session_payload["session_id"]
-    backend_base_url = "http://127.0.0.1:8200"
-    request = urllib.request.Request(
-        f"{backend_base_url}/api/v1/sessions/{session_id}",
-        data=json.dumps(
-            {
-                "status": "regenerate_requested",
-                "correction": correction,
-                "instruction": "Applying your requested changes now. Wait for the regenerated glyph to appear.",
-            }
-        ).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="PATCH",
-    )
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:
-            updated_payload = json.loads(response.read().decode("utf-8"))
+        updated_payload = _patch_session(
+            session_id,
+            {
+                "font_name": font_name,
+                "status": "awaiting_font_name",
+                "instruction": f'I saved the name "{font_name}". Next I will compile the font file.',
+            },
+        )
     except urllib.error.URLError as exc:
-        return json.dumps({"error": f"Failed to update Fontsketch session: {exc}"})
+        return json.dumps({"error": f"Failed to save Fontsketch font name: {exc}"})
 
     return json.dumps(
         {
             "session_id": session_id,
-            "status": updated_payload.get("status", "regenerate_requested"),
+            "status": updated_payload.get("status", "awaiting_font_name"),
             "instruction": updated_payload.get("instruction", ""),
-            "correction": correction,
+            "font_name": font_name,
+        }
+    )
+
+
+def build_fontsketch_font(args: dict, **kwargs) -> str:
+    font_name = (args.get("font_name") or "").strip()
+    if not font_name:
+        return json.dumps({"error": "A non-empty font_name is required."})
+
+    session_payload = _read_full_session((args.get("session_id") or "").strip())
+    if session_payload.get("error"):
+        return json.dumps(session_payload)
+
+    session_id = session_payload["session_id"]
+    glyphs = session_payload.get("normalized_glyphs", []) or _session_export_glyphs(session_payload)
+    if not glyphs:
+        return json.dumps({"error": "No normalized Fontsketch glyphs are available to build the font yet."})
+
+    _patch_session(
+        session_id,
+        {
+            "font_name": font_name,
+            "status": "building_font",
+            "instruction": f'I am compiling "{font_name}" into a font file now.',
+        },
+    )
+    try:
+        font_bytes = _binary_request(
+            f"{BACKEND_BASE_URL}/api/v1/export-partial-font",
+            payload={"session_id": session_id, "glyphs": glyphs},
+            timeout=120.0,
+        )
+    except urllib.error.URLError as exc:
+        return json.dumps({"error": f"Failed to build the Fontsketch font: {exc}"})
+
+    font_data_url = f"data:font/ttf;base64,{base64.b64encode(font_bytes).decode('ascii')}"
+    updated_payload = _patch_session(
+        session_id,
+        {
+            "font_name": font_name,
+            "font_file_data_url": font_data_url,
+            "normalized_glyphs": glyphs,
+            "status": "preview_requested",
+            "instruction": f'I am opening the final preview for "{font_name}" now.',
+        },
+    )
+    return json.dumps(
+        {
+            "session_id": session_id,
+            "status": updated_payload.get("status", "preview_requested"),
+            "instruction": updated_payload.get("instruction", ""),
+            "font_name": font_name,
+            "font_bytes": len(font_bytes),
         }
     )

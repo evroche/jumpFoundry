@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import clearIcon from "./assets/material-icons/clearCOMPACT.svg";
-import approveIcon from "./assets/material-icons/approveCOMPACT.svg";
 import backIcon from "./assets/material-icons/back.svg";
 import downloadIcon from "./assets/material-icons/download.svg";
 import {
@@ -17,7 +16,6 @@ import {
   fetchRun,
   fetchSession,
   normalizeGlyphSet,
-  requestSessionEdit,
   submitSkeletonPreview,
   submitGlyphGeneration,
   submitManyGlyphs,
@@ -63,6 +61,7 @@ export default function App() {
   const [debugHistory, setDebugHistory] = useState<Array<{ at: string; data: unknown }>>([]);
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState("");
   const [postBatchStage, setPostBatchStage] = useState<"grid" | "preview">("grid");
   const [previewText, setPreviewText] = useState("the quick brown fox jumped over the lazy dog");
   const [previewFontBlob, setPreviewFontBlob] = useState<Blob | null>(null);
@@ -79,10 +78,19 @@ export default function App() {
   const [isPreparingReviewArtifacts, setIsPreparingReviewArtifacts] = useState(false);
   const sessionCanvasRef = useRef<DrawingCanvasHandle | null>(null);
   const previewTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const transitionStartedAtRef = useRef<number | null>(null);
   const handledRegenerationRef = useRef("");
+  const handledAdvanceRequestRef = useRef(false);
+  const handledPreviewRequestRef = useRef(false);
+  const syncedSessionAssetsRef = useRef("");
   const hydratedRunIdRef = useRef("");
   const hydratingRunIdRef = useRef("");
   const isAwaitingEditPrompt = session?.status === "awaiting_hermes_edit_prompt";
+  const isAwaitingFontName = session?.status === "awaiting_font_name";
+  const shouldShowWorkingLoader = Boolean(
+    loadingMessage ||
+    isSubmitting
+  );
   const isHydratingReviewRun = Boolean(
     sessionId &&
     session?.stage === "review" &&
@@ -91,6 +99,24 @@ export default function App() {
     !batchResult &&
     !result,
   );
+
+  function beginTransition(message: string) {
+    transitionStartedAtRef.current = Date.now();
+    setLoadingMessage(message);
+  }
+
+  async function endTransition() {
+    const startedAt = transitionStartedAtRef.current;
+    const minimumVisibleMs = 450;
+    const elapsed = startedAt ? Date.now() - startedAt : minimumVisibleMs;
+    const remaining = Math.max(0, minimumVisibleMs - elapsed);
+    if (remaining > 0) {
+      await new Promise((resolve) => window.setTimeout(resolve, remaining));
+    }
+    transitionStartedAtRef.current = null;
+    setLoadingMessage("");
+  }
+
   const skeletonPreviewImage = skeletonPreview?.skeleton_image_data_url || session?.skeleton_image_data_url || "";
   const strokeCount = drawingData?.strokes.length ?? 0;
   const pointCount = drawingData?.strokes.reduce((count, stroke) => count + stroke.points.length, 0) ?? 0;
@@ -111,19 +137,19 @@ export default function App() {
         alt: normalizedCharacter,
       };
     }
-    if (seedReference) {
-      return {
-        key: `seed-${normalizedCharacter}`,
-        character: normalizedCharacter,
-        imageUrl: seedReference.previewUrl,
-        alt: normalizedCharacter,
-      };
-    }
     if (generatedItem) {
       return {
         key: generatedItem.run_id,
         character: normalizedCharacter,
         imageUrl: generatedItem.generated_image_data_url,
+        alt: normalizedCharacter,
+      };
+    }
+    if (seedReference) {
+      return {
+        key: `seed-${normalizedCharacter}`,
+        character: normalizedCharacter,
+        imageUrl: seedReference.previewUrl,
         alt: normalizedCharacter,
       };
     }
@@ -270,6 +296,7 @@ export default function App() {
     hydratedRunIdRef.current = "";
     hydratingRunIdRef.current = "";
     handledRegenerationRef.current = "";
+    handledAdvanceRequestRef.current = false;
     setResult(null);
     setBatchResult(null);
     setSkeletonPreview(null);
@@ -329,18 +356,102 @@ export default function App() {
   }, [sessionId]);
 
   useEffect(() => {
+    if (!sessionId) {
+      syncedSessionAssetsRef.current = "";
+      return;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(() => {
+      void (async () => {
+        const seedPayload = await Promise.all(
+          seedReferences.map(async (reference) => ({
+            character: normalizeLetter(reference.character),
+            image_data_url: await blobToDataUrl(reference.blob),
+          })),
+        );
+        const currentDrawingImageDataUrl = referenceBlob ? await blobToDataUrl(referenceBlob) : "";
+        const syncPayload = JSON.stringify({
+          seedPayload,
+          currentDrawingImageDataUrl,
+        });
+        if (syncPayload === syncedSessionAssetsRef.current) {
+          return;
+        }
+        const sessionSeedPayload = JSON.stringify({
+          seedPayload: session?.seed_references ?? [],
+          currentDrawingImageDataUrl: session?.current_drawing_image_data_url ?? "",
+        });
+        if (syncPayload === sessionSeedPayload) {
+          syncedSessionAssetsRef.current = syncPayload;
+          return;
+        }
+        try {
+          await updateSession(sessionId, {
+            seed_references: seedPayload,
+            current_drawing_image_data_url: currentDrawingImageDataUrl,
+          });
+          if (!cancelled) {
+            syncedSessionAssetsRef.current = syncPayload;
+          }
+        } catch {
+          // Ignore transient sync failures; the next state change or poll can recover.
+        }
+      })();
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [sessionId, session?.seed_references, session?.current_drawing_image_data_url, seedReferences, referenceBlob]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      return;
+    }
+
+    let isActive = true;
+    const intervalId = window.setInterval(() => {
+      void fetchSession(sessionId)
+        .then((nextSession) => {
+          if (!isActive) {
+            return;
+          }
+          setSession((current) => {
+            if (!current) {
+              return nextSession;
+            }
+            if (JSON.stringify(current) === JSON.stringify(nextSession)) {
+              return current;
+            }
+            return nextSession;
+          });
+        })
+        .catch(() => {
+          // Ignore polling errors; the next tick can recover.
+        });
+    }, 1000);
+
+    return () => {
+      isActive = false;
+      window.clearInterval(intervalId);
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
     if (
       !sessionId ||
       !session ||
       session.stage !== "review" ||
       session.status !== "ready" ||
       !session.latest_run_id ||
-      batchResult ||
-      result
+      batchResult
     ) {
       return;
     }
     if (
+      result?.run_id === session.latest_run_id ||
       hydratedRunIdRef.current === session.latest_run_id ||
       hydratingRunIdRef.current === session.latest_run_id
     ) {
@@ -375,7 +486,63 @@ export default function App() {
       isActive = false;
       abortController.abort();
     };
-  }, [sessionId, session?.stage, session?.status, session?.latest_run_id, result, batchResult]);
+  }, [sessionId, session?.stage, session?.status, session?.latest_run_id, result?.run_id, batchResult]);
+
+  useEffect(() => {
+    if (!session?.batch_run_ids?.length || batchResult) {
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const runs = await Promise.all(session.batch_run_ids.map((runId) => fetchRun(runId)));
+        if (cancelled || runs.length === 0) {
+          return;
+        }
+        setBatchResult({
+          backend_version: runs[0]?.backend_version ?? session.backend_version,
+          source_character: result?.target_character ?? session.source_character,
+          target_characters: runs.map((run) => run.target_character),
+          accepted_run_id: session.latest_run_id,
+          items: runs,
+        });
+        setPostBatchStage("grid");
+      } catch {
+        // Ignore transient hydration failures; polling can retry after the next session update.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.batch_run_ids, session?.backend_version, session?.latest_run_id, session?.source_character, result, batchResult]);
+
+  useEffect(() => {
+    if (!session?.font_file_data_url || postBatchStage === "preview") {
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const fontBlob = dataUrlToBlob(session.font_file_data_url);
+        await loadPreviewFont(fontBlob, previewFontFamily);
+        if (cancelled) {
+          return;
+        }
+        setPreviewFontBlob(fontBlob);
+        setNormalizedExportGlyphs(session.normalized_glyphs ?? []);
+        setPostBatchStage("preview");
+      } catch {
+        // Ignore transient font hydration failures; polling can retry after the next session update.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.font_file_data_url, session?.normalized_glyphs, postBatchStage]);
 
   useEffect(() => {
     if (postBatchStage !== "preview") {
@@ -399,23 +566,6 @@ export default function App() {
   }, [postBatchStage]);
 
   useEffect(() => {
-    if (
-      !session ||
-      session.stage !== "review" ||
-      !session.latest_run_id ||
-      !result ||
-      batchResult ||
-      result.run_id === session.latest_run_id
-    ) {
-      return;
-    }
-
-    setResult(null);
-    hydratedRunIdRef.current = "";
-    hydratingRunIdRef.current = "";
-  }, [session?.stage, session?.latest_run_id, result, batchResult]);
-
-  useEffect(() => {
     const shouldPollSession = Boolean(
       sessionId &&
       (
@@ -429,6 +579,14 @@ export default function App() {
       return;
     }
 
+    void fetchSession(sessionId)
+      .then((nextSession) => {
+        setSession(nextSession);
+      })
+      .catch(() => {
+        // Ignore transient polling errors while the local backend restarts.
+      });
+
     const interval = window.setInterval(() => {
       void fetchSession(sessionId)
         .then((nextSession) => {
@@ -437,7 +595,7 @@ export default function App() {
         .catch(() => {
           // Ignore transient polling errors while the local backend restarts.
         });
-    }, 1200);
+    }, 250);
 
     return () => {
       window.clearInterval(interval);
@@ -560,6 +718,7 @@ export default function App() {
       !session ||
       session.status !== "regenerate_requested" ||
       !result ||
+      batchResult ||
       seedReferences.length < 2 ||
       isSubmitting
     ) {
@@ -577,6 +736,7 @@ export default function App() {
     const brushSizeForRevision = drawingData?.brush_size ?? brushSize;
 
     void (async () => {
+      beginTransition(`I’m revising "${result.target_character}" now. Hang tight while I generate the updated letter.`);
       setIsSubmitting(true);
       setErrorMessage("");
       try {
@@ -595,15 +755,188 @@ export default function App() {
         hydratingRunIdRef.current = "";
         setResult(nextResult);
         setReviewTab("skeleton");
-        const nextSession = await fetchSession(sessionId);
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "Unknown error");
+      } finally {
+        setIsSubmitting(false);
+        await endTransition();
+      }
+    })();
+  }, [sessionId, session, result, batchResult, seedReferences, isSubmitting, drawingData?.brush_size, brushSize]);
+
+  useEffect(() => {
+    if (
+      !sessionId ||
+      !session ||
+      session.status !== "regenerate_requested" ||
+      !batchResult ||
+      seedReferences.length < 2 ||
+      isSubmitting
+    ) {
+      return;
+    }
+
+    const selectedRevisionCharacters = (session.selected_revision_characters ?? []).map(normalizeLetter);
+    if (selectedRevisionCharacters.length === 0 || !session.correction) {
+      return;
+    }
+
+    const correctionKey = `${selectedRevisionCharacters.join(",")}:${session.correction}`;
+    if (handledRegenerationRef.current === correctionKey) {
+      return;
+    }
+
+    handledRegenerationRef.current = correctionKey;
+    const primarySeed = seedReferences[0];
+    const secondarySeed = seedReferences[1];
+    const brushSizeForRevision = drawingData?.brush_size ?? brushSize;
+
+    void (async () => {
+      beginTransition(
+        `I’m revising ${formatCharacterList(selectedRevisionCharacters)} now. Hang tight while I generate the updated letters.`,
+      );
+      setIsSubmitting(true);
+      setErrorMessage("");
+      try {
+        const revisedRuns: RunResponse[] = [];
+        for (const character of selectedRevisionCharacters) {
+          const existingRun = normalizeLetter(result?.target_character ?? "") === character
+            ? result
+            : batchResult.items.find((item) => normalizeLetter(item.target_character) === character);
+          const nextRun = await submitGlyphGeneration(
+            primarySeed.blob,
+            primarySeed.character,
+            character,
+            session.correction ?? "",
+            existingRun?.run_id ?? "",
+            sessionId,
+            "final",
+            brushSizeForRevision,
+            [toAdditionalReference(secondarySeed)],
+          );
+          revisedRuns.push(nextRun);
+        }
+
+        const revisedByCharacter = new Map(
+          revisedRuns.map((item) => [normalizeLetter(item.target_character), item]),
+        );
+        const revisedResult = result && revisedByCharacter.get(normalizeLetter(result.target_character));
+        if (revisedResult) {
+          setResult(revisedResult);
+          setReviewTab("skeleton");
+        }
+
+        const mergedBatchItems = new Map(
+          batchResult.items.map((item) => [normalizeLetter(item.target_character), item]),
+        );
+        for (const item of revisedRuns) {
+          if (normalizeLetter(item.target_character) !== normalizeLetter(result?.target_character ?? "")) {
+            mergedBatchItems.set(normalizeLetter(item.target_character), item);
+          }
+        }
+
+        const nextBatchItems = Array.from(mergedBatchItems.values()).sort(
+          (left, right) => ALPHABET.indexOf(normalizeLetter(left.target_character)) - ALPHABET.indexOf(normalizeLetter(right.target_character)),
+        );
+        setBatchResult({
+          ...batchResult,
+          target_characters: nextBatchItems.map((item) => normalizeLetter(item.target_character)),
+          items: nextBatchItems,
+        });
+        setSelectedBatchLetters([]);
+
+        const nextSession = await updateSession(sessionId, {
+          status: "ready",
+          stage: "review",
+          instruction: `I’ve generated revisions for ${formatCharacterList(selectedRevisionCharacters)}. Let me know if you’d like any more changes.`,
+          selected_revision_characters: [],
+        });
         setSession(nextSession);
       } catch (error) {
         setErrorMessage(error instanceof Error ? error.message : "Unknown error");
       } finally {
         setIsSubmitting(false);
+        await endTransition();
       }
     })();
-  }, [sessionId, session, result, seedReferences, isSubmitting, drawingData?.brush_size, brushSize]);
+  }, [sessionId, session, batchResult, result, seedReferences, isSubmitting, drawingData?.brush_size, brushSize]);
+
+  useEffect(() => {
+    if (!sessionId || !batchResult) {
+      return;
+    }
+
+    const selectedInSession = (session?.selected_revision_characters ?? []).map(normalizeLetter).sort();
+    const selectedLocally = selectedBatchLetters.map(normalizeLetter).sort();
+    if (JSON.stringify(selectedInSession) === JSON.stringify(selectedLocally)) {
+      return;
+    }
+
+    void updateSession(sessionId, {
+      selected_revision_characters: selectedLocally,
+    })
+      .then((nextSession) => {
+        setSession(nextSession);
+      })
+      .catch(() => {
+        // Ignore transient sync errors; polling can recover.
+      });
+  }, [sessionId, session?.selected_revision_characters, selectedBatchLetters, batchResult]);
+
+  useEffect(() => {
+    if (!session) {
+      handledAdvanceRequestRef.current = false;
+      return;
+    }
+    if (session.status !== "advance_requested") {
+      handledAdvanceRequestRef.current = false;
+      return;
+    }
+    if (handledAdvanceRequestRef.current || isSubmitting) {
+      return;
+    }
+
+    handledAdvanceRequestRef.current = true;
+    void (async () => {
+      try {
+        if (batchResult) {
+          await handlePrepareFontPreview();
+          return;
+        }
+        if (result && seedReferences.length >= 2) {
+          await handleApprove();
+          return;
+        }
+        await generateFromReference();
+      } catch {
+        handledAdvanceRequestRef.current = false;
+        await endTransition();
+      }
+    })();
+  }, [session, batchResult, result, seedReferences, isSubmitting]);
+
+  useEffect(() => {
+    if (!session) {
+      handledPreviewRequestRef.current = false;
+      return;
+    }
+    if (session.status !== "preview_requested" || session.font_file_data_url) {
+      handledPreviewRequestRef.current = false;
+      return;
+    }
+    if (handledPreviewRequestRef.current || isSubmitting) {
+      return;
+    }
+
+    handledPreviewRequestRef.current = true;
+    void (async () => {
+      try {
+        await handleOpenFontPreview();
+      } catch {
+        handledPreviewRequestRef.current = false;
+      }
+    })();
+  }, [session, isSubmitting, previewFontBlob, batchResult, result, seedReferences, normalizedExportGlyphs]);
 
   async function handleGenerate() {
     if (sessionId) {
@@ -617,6 +950,7 @@ export default function App() {
     }
 
     setIsSubmitting(true);
+    beginTransition("I’m generating your glyph now. Hang tight while I prepare the review.");
     setErrorMessage("");
 
     try {
@@ -650,6 +984,7 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Unknown error");
     } finally {
       setIsSubmitting(false);
+      await endTransition();
     }
   }
 
@@ -663,6 +998,7 @@ export default function App() {
     }
 
     setIsSubmitting(true);
+    beginTransition("I’m building the skeleton preview now.");
     setErrorMessage("");
 
     try {
@@ -687,6 +1023,7 @@ export default function App() {
       return null;
     } finally {
       setIsSubmitting(false);
+      await endTransition();
     }
   }
 
@@ -718,21 +1055,37 @@ export default function App() {
       await updateSession(sessionId, {
         source_character: SECOND_SEED_CHARACTER,
         target_character: nextAlphabetCharacter(firstSeedCharacter),
-        instruction: 'Now draw the letter "S".',
+        instruction: 'I recorded your first letter. Now draw the letter "S".',
         skeleton_image_data_url: "",
         status: "ready",
         stage: "draw",
+        selected_revision_characters: [],
+        batch_run_ids: [],
+        normalized_glyphs: [],
+        font_file_data_url: "",
       });
       return;
     }
 
+    const nextLetterToReview = nextAlphabetCharacter(seedReferences[0]?.character ?? sourceCharacter);
     setIsSubmitting(true);
+    beginTransition(`I’m generating "${nextLetterToReview}" for review now. Hang tight.`);
     setErrorMessage("");
 
     try {
+      setSession((current) => (
+        current
+          ? {
+              ...current,
+              status: "generating_single",
+              instruction: `I’m generating "${nextLetterToReview}" for review now. Hang tight.`,
+            }
+          : current
+      ));
       await updateSession(sessionId, {
         status: "generating_single",
-        instruction: `Generating the letter "${nextAlphabetCharacter(seedReferences[0]?.character ?? sourceCharacter)}" now. Wait for the review screen to load.`,
+        instruction: `I’m generating "${nextLetterToReview}" for review now. Hang tight, and then let me know if you’d like to approve it or request changes.`,
+        selected_revision_characters: [],
       });
       const primarySeed = seedReferences[0];
       const secondSeed: SeedReference = seedReferences[1] ?? {
@@ -781,7 +1134,11 @@ export default function App() {
               source_character: primarySeed.character,
               target_character: effectiveTargetCharacter,
               latest_run_id: nextResult.run_id,
-              instruction: `Review the generated "${effectiveTargetCharacter}" glyph. Approve it if it looks right, or choose edit to request changes.`,
+              instruction: `I generated "${effectiveTargetCharacter}". Approve it if it looks right, or message me back to request changes.`,
+              selected_revision_characters: [],
+              batch_run_ids: [],
+              normalized_glyphs: [],
+              font_file_data_url: "",
             }
           : current
       ));
@@ -791,12 +1148,11 @@ export default function App() {
         { at: new Date().toISOString(), data: nextResult.debug },
         ...current,
       ].slice(0, 12));
-      const nextSession = await fetchSession(sessionId);
-      setSession(nextSession);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Unknown error");
     } finally {
       setIsSubmitting(false);
+      await endTransition();
     }
   }
 
@@ -810,8 +1166,9 @@ export default function App() {
       const nextSession = await updateSession(sessionId, {
         stage: "draw",
         status: "ready",
-        instruction: "Start by drawing one letter. We'll use it to generate the rest of the typeface.",
+        instruction: "I'm ready with Fontsketch. Start by drawing one letter, and I'll use it to help generate the rest of the typeface.",
         skeleton_image_data_url: "",
+        selected_revision_characters: [],
       });
       setSession(nextSession);
       setSkeletonPreview(null);
@@ -844,6 +1201,7 @@ export default function App() {
     }
 
     setIsSubmitting(true);
+    beginTransition("I’m going to generate the rest of the alphabet now. Hang tight while I build the full set.");
     setErrorMessage("");
 
     try {
@@ -852,9 +1210,19 @@ export default function App() {
       const items: RunResponse[] = [];
       const primarySeed = seedReferences[0];
       const secondarySeed = seedReferences[1];
+      setSession((current) => (
+        current
+          ? {
+              ...current,
+              status: "generating_batch",
+              instruction: "I’m going to generate the rest of the alphabet now. Hang tight while I build the full set.",
+            }
+          : current
+      ));
       await updateSession(sessionId, {
         status: "generating_batch",
-        instruction: `Generating the next letters ${nextTargets.join(", ")} now. Wait for the board to load.`,
+        instruction: "I’m going to generate the rest of the alphabet now. Hang tight while I build the full set.",
+        selected_revision_characters: [],
       });
 
       for (const nextTarget of nextTargets) {
@@ -886,7 +1254,9 @@ export default function App() {
         target_character: nextTargets[0] ?? nextAlphabetCharacter(approvedCharacter),
         status: "ready",
         stage: "review",
-        instruction: `Review the generated letters ${nextTargets.join(", ")} on the board, then continue to the font preview when you're ready.`,
+        instruction: "I generated the next set of letters. If you'd like changes, select the letters you'd like to revise and let me know when you're ready.",
+        selected_revision_characters: [],
+        batch_run_ids: items.map((item) => item.run_id),
       });
       setBatchResult(nextBatch);
       setDebugHistory((current) => [
@@ -898,21 +1268,7 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Unknown error");
     } finally {
       setIsSubmitting(false);
-    }
-  }
-
-  async function handleEditRequest() {
-    if (!sessionId) {
-      return;
-    }
-
-    setErrorMessage("");
-
-    try {
-      const nextSession = await requestSessionEdit(sessionId);
-      setSession(nextSession);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Unknown error");
+      await endTransition();
     }
   }
 
@@ -951,7 +1307,38 @@ export default function App() {
     try {
       const fontBlob = previewFontBlob ?? await buildPreviewFontBlob(sessionId, seedReferences, result, batchResult, normalizedExportGlyphs);
       setPreviewFontBlob(fontBlob);
-      downloadBlob(fontBlob, `fontsketch-partial-${sessionId}.ttf`);
+      const normalizedFontName = (session?.font_name || "").trim();
+      const downloadName = normalizedFontName
+        ? `${slugifyFontName(normalizedFontName)}.ttf`
+        : `fontsketch-partial-${sessionId}.ttf`;
+      downloadBlob(fontBlob, downloadName);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Unknown error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handlePrepareFontPreview() {
+    if (!sessionId || seedReferences.length < 2 || !result || !batchResult) {
+      setErrorMessage("Generate the two source letters and the resulting set first so I can prepare the font preview.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorMessage("");
+
+    try {
+      const fontBlob = previewFontBlob ?? await buildPreviewFontBlob(sessionId, seedReferences, result, batchResult, normalizedExportGlyphs);
+      setPreviewFontBlob(fontBlob);
+      await loadPreviewFont(fontBlob, previewFontFamily);
+      const nextSession = await updateSession(sessionId, {
+        instruction: "Now I'll compile your font and prepare it for download. What name would you like to give your font?",
+        status: "awaiting_font_name",
+        stage: "review",
+        selected_revision_characters: [],
+      });
+      setSession(nextSession);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Unknown error");
     } finally {
@@ -972,11 +1359,13 @@ export default function App() {
       const fontBlob = previewFontBlob ?? await buildPreviewFontBlob(sessionId, seedReferences, result, batchResult, normalizedExportGlyphs);
       setPreviewFontBlob(fontBlob);
       await loadPreviewFont(fontBlob, previewFontFamily);
-      await updateSession(sessionId, {
-        instruction: "Test your font in the preview text area. When it feels right, download the font.",
+      const nextSession = await updateSession(sessionId, {
+        instruction: `Your font${session?.font_name ? ` "${session.font_name}"` : ""} is ready. Click the download button to download and install it on your computer.`,
         status: "ready",
         stage: "review",
+        selected_revision_characters: [],
       });
+      setSession(nextSession);
       setPostBatchStage("preview");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Unknown error");
@@ -1000,13 +1389,16 @@ export default function App() {
       <main className="page-shell page-shell-session">
         {sessionError ? <p className="error-text">{sessionError}</p> : null}
         {session ? (
-          isSubmitting ? (
+          shouldShowWorkingLoader ? (
             <section className="session-loading-layout">
               <div className="session-loading-dots" aria-label="Loading">
                 <span>.</span>
                 <span>.</span>
                 <span>.</span>
               </div>
+              <p className="session-loading-message">
+                {loadingMessage || "Working on it now."}
+              </p>
             </section>
           ) : batchResult ? (
             <section className="session-review-layout">
@@ -1032,23 +1424,7 @@ export default function App() {
                     </div>
                   </section>
                   <div className="session-review-actions session-review-actions-centered">
-                    <div className="session-review-actions-trailing">
-                      <button
-                        type="button"
-                        className="session-icon-button session-review-placeholder-button"
-                        aria-label="Edit selected letters"
-                      >
-                        <img src={redoIcon} alt="" className="session-icon-image" />
-                      </button>
-                      <button
-                        type="button"
-                        className="session-submit-button session-review-approve-button"
-                        onClick={handleOpenFontPreview}
-                        aria-label="Preview Font"
-                      >
-                        <img src={approveIcon} alt="" className="session-submit-icon" />
-                      </button>
-                    </div>
+                    <div className="session-review-actions-trailing" aria-hidden="true" />
                   </div>
                 </div>
               ) : (
@@ -1126,28 +1502,9 @@ export default function App() {
                   )}
                 </section>
 
-                {!isAwaitingEditPrompt ? (
-                  <div className="session-review-actions session-review-actions-centered">
-                    <div className="session-review-actions-trailing">
-                      <button
-                        type="button"
-                        className="session-icon-button session-review-edit-button"
-                        aria-label="Edit"
-                        onClick={handleEditRequest}
-                      >
-                        <img src={redoIcon} alt="" className="session-icon-image" />
-                      </button>
-                      <button
-                        type="button"
-                        className="session-submit-button session-review-approve-button"
-                        aria-label="Approve"
-                        onClick={handleApprove}
-                      >
-                        <img src={approveIcon} alt="" className="session-submit-icon" />
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
+                <div className="session-review-actions session-review-actions-centered">
+                  <div className="session-review-actions-trailing" aria-hidden="true" />
+                </div>
               </div>
             </section>
           ) : (
@@ -1170,10 +1527,10 @@ export default function App() {
                   </section>
                   ) : (
                     <DrawingCanvas
+                      key={`${sessionId || "local"}-${sourceCharacter}`}
                       ref={sessionCanvasRef}
                       onExportReady={setReferenceBlob}
                       onVectorChange={setDrawingData}
-                      initialDrawing={drawingData}
                       size={SESSION_CANVAS_SIZE}
                       brushSize={brushSize}
                       showToolbar={false}
@@ -1229,15 +1586,6 @@ export default function App() {
 
                   <button type="button" className="session-icon-button" onClick={() => sessionCanvasRef.current?.clear()} aria-label="Clear">
                     <img src={clearIcon} alt="" className="session-icon-image" />
-                  </button>
-
-                  <button
-                    type="button"
-                    className="session-submit-button"
-                    disabled={isSubmitting || (drawStageTab === "skeleton" ? !skeletonPreviewImage : strokeCount === 0)}
-                    onClick={handleGenerate}
-                  >
-                    {isSubmitting ? "..." : <img src={approveIcon} alt="" className="session-submit-icon" />}
                   </button>
                 </div>
               </div>
@@ -1392,6 +1740,31 @@ function brushLabelForSize(brushSize: number): string {
   return "Small";
 }
 
+function formatCharacterList(characters: string[]): string {
+  return characters.map(normalizeLetter).join(", ");
+}
+
+function slugifyFontName(value: string): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || "fontsketch-font";
+}
+
+function isWorkingSessionStatus(status: string): boolean {
+  return [
+    "advance_requested",
+    "generating_single",
+    "generating_batch",
+    "regenerate_requested",
+    "exporting_outlines",
+    "normalizing_glyphs",
+    "building_font",
+  ].includes(status);
+}
+
 function dataUrlToBlob(dataUrl: string): Blob {
   const [header, encoded] = dataUrl.split(",", 2);
   const mimeMatch = header.match(/^data:(.*?);base64$/);
@@ -1438,7 +1811,7 @@ async function buildExportGlyphs(
       image_data_url: await blobToDataUrl(reference.blob),
     })),
   );
-  return [
+  const glyphs = [
     ...normalizedSeeds,
     {
       character: result.target_character,
@@ -1449,6 +1822,16 @@ async function buildExportGlyphs(
       image_data_url: item.generated_image_data_url,
     })),
   ];
+  const dedupedGlyphs = new Map<string, GlyphOutlineExportItem>();
+  for (const glyph of glyphs) {
+    dedupedGlyphs.set(normalizeLetter(glyph.character), {
+      character: normalizeLetter(glyph.character),
+      image_data_url: glyph.image_data_url,
+    });
+  }
+  return Array.from(dedupedGlyphs.values()).sort(
+    (left, right) => ALPHABET.indexOf(normalizeLetter(left.character)) - ALPHABET.indexOf(normalizeLetter(right.character)),
+  );
 }
 
 async function buildPreviewFontBlob(

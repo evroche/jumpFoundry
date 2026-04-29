@@ -33,6 +33,13 @@ export type SessionResponse = {
   latest_run_id: string;
   skeleton_image_data_url: string;
   structural_mode: StructuralMode;
+  selected_revision_characters: string[];
+  font_name: string;
+  current_drawing_image_data_url: string;
+  seed_references: GlyphOutlineExportItem[];
+  batch_run_ids: string[];
+  normalized_glyphs: GlyphOutlineExportItem[];
+  font_file_data_url: string;
 };
 
 export type RunResponse = {
@@ -247,6 +254,13 @@ export async function updateSession(
     skeleton_image_data_url?: string;
     structural_mode?: StructuralMode;
     status?: string;
+    selected_revision_characters?: string[];
+    font_name?: string;
+    current_drawing_image_data_url?: string;
+    seed_references?: GlyphOutlineExportItem[];
+    batch_run_ids?: string[];
+    normalized_glyphs?: GlyphOutlineExportItem[];
+    font_file_data_url?: string;
   },
 ): Promise<SessionResponse> {
   const response = await fetch(`${API_BASE_URL}/api/v1/sessions/${sessionId}`, {
@@ -260,9 +274,11 @@ export async function updateSession(
   return response.json();
 }
 
-export async function requestSessionEdit(sessionId: string): Promise<SessionResponse> {
+export async function requestSessionEdit(sessionId: string, selectedRevisionCharacters: string[] = []): Promise<SessionResponse> {
   const response = await fetch(`${API_BASE_URL}/api/v1/sessions/${sessionId}/edit-request`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ selected_revision_characters: selectedRevisionCharacters }),
   });
   if (!response.ok) {
     throw new Error("Failed to request edit");

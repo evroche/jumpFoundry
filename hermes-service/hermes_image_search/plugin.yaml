@@ -4,4 +4,11 @@ description: Launch and support local Fontsketch font-creation sessions
 provides_tools:
   - start_fontsketch_session
   - get_fontsketch_session_status
-  - submit_fontsketch_revision
+  - advance_fontsketch_session
+  - generate_review_glyph
+  - generate_alphabet
+  - export_outline_svgs
+  - normalize_glyphs
+  - set_font_name
+  - build_font_file
+  - apply_revision

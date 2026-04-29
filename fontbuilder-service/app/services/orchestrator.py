@@ -131,15 +131,20 @@ class GenerationOrchestrator:
                     "status": "ready",
                     "stage": "review",
                     "instruction": (
-                        f'Review the generated "{target_character.upper()}" glyph skeleton.'
+                        f'I generated the "{target_character.upper()}" glyph skeleton. Review it before I continue.'
                         if generation_mode == "skeleton"
-                        else f'Review the generated "{target_character.upper()}" glyph. Approve it if it looks right, or choose edit to request changes.'
+                        else (
+                            f'I generated a revision of "{target_character.upper()}". Let me know if it looks good or if you want another revision.'
+                            if correction and previous_generated_image_bytes
+                            else f'I generated "{target_character.upper()}". Approve it if it looks right, or message me back to request changes.'
+                        )
                     ),
                     "source_character": source_character.upper(),
                     "target_character": target_character.upper(),
                     "correction": correction,
                     "latest_run_id": run_id,
                     "skeleton_image_data_url": "",
+                    "selected_revision_characters": [],
                 },
             )
         return response
