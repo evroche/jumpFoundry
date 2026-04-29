@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import biggerIcon from "./assets/material-icons/bigger.svg";
 import clearIcon from "./assets/material-icons/clearCOMPACT.svg";
 import downloadIcon from "./assets/material-icons/download.svg";
 import {
@@ -9,6 +10,7 @@ import {
 import letterDownIcon from "./assets/material-icons/letter-down.svg";
 import letterUpIcon from "./assets/material-icons/letter-up.svg";
 import redoIcon from "./assets/material-icons/redoCOMPACT.svg";
+import smallerIcon from "./assets/material-icons/smaller.svg";
 import undoIcon from "./assets/material-icons/undoCOMPACT.svg";
 import {
   exportPartialFont,
@@ -63,6 +65,7 @@ export default function App() {
   const [loadingMessage, setLoadingMessage] = useState("");
   const [postBatchStage, setPostBatchStage] = useState<"grid" | "preview">("grid");
   const [previewText, setPreviewText] = useState("the quick brown fox jumped over the lazy dog");
+  const [previewFontSizeOffset, setPreviewFontSizeOffset] = useState(0);
   const [previewFontBlob, setPreviewFontBlob] = useState<Blob | null>(null);
   const [seedReferences, setSeedReferences] = useState<SeedReference[]>([]);
   const [selectedBatchLetters, setSelectedBatchLetters] = useState<string[]>([]);
@@ -271,6 +274,30 @@ export default function App() {
     return false;
   }
 
+  function handlePreviewScreenKeys(
+    event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "preventDefault" | "stopPropagation">,
+  ) {
+    if (event.metaKey || event.ctrlKey || event.altKey) {
+      return false;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      event.stopPropagation();
+      adjustPreviewFontSize("bigger");
+      return true;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      event.stopPropagation();
+      adjustPreviewFontSize("smaller");
+      return true;
+    }
+
+    return false;
+  }
+
   const reviewTabs = (
     <div className={`session-frame-tabs-shell ${reviewTabsOpen ? "is-open" : "is-collapsed"}`}>
       {reviewTabsOpen ? (
@@ -334,6 +361,7 @@ export default function App() {
     setReferenceBlob(null);
     setDrawingData(null);
     setPreviewFontBlob(null);
+    setPreviewFontSizeOffset(0);
     setPostBatchStage("grid");
     setReviewTab("skeleton");
     setDrawStageTab("draw");
@@ -760,6 +788,22 @@ export default function App() {
       document.removeEventListener("keydown", handleGlobalLetterStepper, true);
     };
   }, [sessionId, session?.stage, result, batchResult, isSubmitting]);
+
+  useEffect(() => {
+    const isPreviewScreen = Boolean(sessionId && postBatchStage === "preview");
+    if (!isPreviewScreen) {
+      return;
+    }
+
+    function handleGlobalPreviewSizing(event: KeyboardEvent) {
+      handlePreviewScreenKeys(event);
+    }
+
+    document.addEventListener("keydown", handleGlobalPreviewSizing, true);
+    return () => {
+      document.removeEventListener("keydown", handleGlobalPreviewSizing, true);
+    };
+  }, [sessionId, postBatchStage]);
 
   useEffect(() => {
     if (!result?.generated_image_data_url) {
@@ -1384,6 +1428,10 @@ export default function App() {
     );
   }
 
+  function adjustPreviewFontSize(direction: "smaller" | "bigger") {
+    setPreviewFontSizeOffset((current) => current + (direction === "bigger" ? 6 : -6));
+  }
+
   if (sessionId) {
     return (
       <main className="page-shell page-shell-session">
@@ -1422,7 +1470,7 @@ export default function App() {
                   </div>
                 </div>
               ) : (
-                <div className="session-stage-stack session-stage-stack-wide">
+                <div className="session-stage-stack session-stage-stack-wide session-font-preview-stage">
                   <section className="session-review-frame session-font-preview-frame">
                     <textarea
                       ref={previewTextareaRef}
@@ -1438,10 +1486,29 @@ export default function App() {
                           textarea.setSelectionRange(selectionStart, selectionEnd);
                         });
                       }}
-                      style={{ fontFamily: `"${previewFontFamily}", serif` }}
+                      style={{
+                        fontFamily: `"${previewFontFamily}", serif`,
+                        fontSize: `calc(clamp(126px, 19.5vw, 288px) + ${previewFontSizeOffset}px)`,
+                      }}
                     />
                   </section>
                   <div className="session-review-actions session-review-actions-centered session-font-preview-actions">
+                    <button
+                      type="button"
+                      className="session-icon-button session-font-preview-action-button"
+                      onClick={() => adjustPreviewFontSize("smaller")}
+                      aria-label="Smaller"
+                    >
+                      <img src={smallerIcon} alt="" className="session-icon-image" />
+                    </button>
+                    <button
+                      type="button"
+                      className="session-icon-button session-font-preview-action-button"
+                      onClick={() => adjustPreviewFontSize("bigger")}
+                      aria-label="Bigger"
+                    >
+                      <img src={biggerIcon} alt="" className="session-icon-image" />
+                    </button>
                     <button
                       type="button"
                       className="session-submit-button session-review-approve-button session-font-preview-action-button"
@@ -1485,7 +1552,9 @@ export default function App() {
                 </section>
 
                 <div className="session-review-actions session-review-actions-centered">
-                  <div className="session-review-actions-trailing" aria-hidden="true" />
+                  <div className="session-review-character" aria-label={`Character ${result.target_character}`}>
+                    {result.target_character}
+                  </div>
                 </div>
               </div>
             </section>

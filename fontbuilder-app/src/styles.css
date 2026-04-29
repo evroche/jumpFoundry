@@ -558,6 +558,17 @@ textarea {
   display: none;
 }
 
+.session-review-character {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1ch;
+  font-size: clamp(3.5rem, 7vw, 6rem);
+  line-height: 1;
+  color: var(--session-icon-color);
+  text-align: center;
+}
+
 .session-review-edit-button {
   margin-left: 0;
 }
@@ -667,10 +678,36 @@ textarea {
   align-items: stretch;
 }
 
+.session-font-preview-stage {
+  position: relative;
+}
+
+.session-font-preview-stage .session-font-preview-frame {
+  width: 100vw;
+  height: 100dvh;
+  aspect-ratio: auto;
+  flex: 1 1 100%;
+}
+
+.session-font-preview-actions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  gap: clamp(18px, 2.6vw, 34px);
+  background: transparent;
+  z-index: 3;
+}
+
 .session-font-preview-actions .session-icon-image,
 .session-font-preview-actions .session-submit-icon {
   width: 168px;
   height: 168px;
+}
+
+.session-font-preview-actions .session-icon-button,
+.session-font-preview-actions .session-submit-button {
+  pointer-events: auto;
 }
 
 .session-font-preview-action-button {
@@ -681,7 +718,7 @@ textarea {
   width: 100%;
   height: 100%;
   border: 0;
-  padding: 0 20px;
+  padding: 0 20px 0;
   resize: none;
   outline: none;
   font-size: clamp(126px, 19.5vw, 288px);
