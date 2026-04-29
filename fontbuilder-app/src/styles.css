@@ -130,8 +130,8 @@ textarea {
 }
 
 .session-loading-pulse {
-  width: min(16rem, 32vw);
-  height: min(16rem, 32vw);
+  width: min(11.2rem, 22.4vw);
+  height: min(11.2rem, 22.4vw);
   border-radius: 50%;
   background: rgba(17, 17, 17, 0.18);
   animation: session-batch-pulse 1.9s ease-in-out infinite;

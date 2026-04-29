@@ -126,7 +126,7 @@ export default function App() {
 
   async function endTransition() {
     const startedAt = transitionStartedAtRef.current;
-    const minimumVisibleMs = 1200;
+    const minimumVisibleMs = 2400;
     const elapsed = startedAt ? Date.now() - startedAt : minimumVisibleMs;
     const remaining = Math.max(0, minimumVisibleMs - elapsed);
     if (remaining > 0) {
