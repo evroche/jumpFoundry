@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import clearIcon from "./assets/material-icons/clearCOMPACT.svg";
-import backIcon from "./assets/material-icons/back.svg";
 import downloadIcon from "./assets/material-icons/download.svg";
 import {
   DrawingCanvas,
@@ -67,6 +66,7 @@ export default function App() {
   const [previewFontBlob, setPreviewFontBlob] = useState<Blob | null>(null);
   const [seedReferences, setSeedReferences] = useState<SeedReference[]>([]);
   const [selectedBatchLetters, setSelectedBatchLetters] = useState<string[]>([]);
+  const [pendingBatchLetters, setPendingBatchLetters] = useState<string[]>([]);
   const [normalizedExportGlyphs, setNormalizedExportGlyphs] = useState<GlyphOutlineExportItem[]>([]);
   const [brushSize, setBrushSize] = useState(16);
   const [drawStageTab, setDrawStageTab] = useState<"draw" | "vector" | "skeleton">("draw");
@@ -85,13 +85,30 @@ export default function App() {
   const syncedSessionAssetsRef = useRef("");
   const hydratedRunIdRef = useRef("");
   const hydratingRunIdRef = useRef("");
+  const batchRevisionStatusRef = useRef("");
   const isAwaitingEditPrompt = session?.status === "awaiting_hermes_edit_prompt";
   const isAwaitingFontName = session?.status === "awaiting_font_name";
   const isSessionWorking = Boolean(session && isWorkingSessionStatus(session.status));
-  const shouldShowWorkingLoader = Boolean(
+  const sessionBatchRunIdsSignature = JSON.stringify(session?.batch_run_ids ?? []);
+  const hydratedBatchRunIdsSignature = JSON.stringify(batchResult?.items.map((item) => item.run_id) ?? []);
+  const isInlineBatchRevision = Boolean(
+    batchResult &&
+    session?.stage === "review" &&
+    session?.status === "generating_batch"
+  );
+  const isHydratingFontNamePreview = Boolean(
+    sessionId &&
+    isAwaitingFontName &&
+    result &&
+    batchResult &&
+    seedReferences.length >= 2 &&
+    postBatchStage !== "preview"
+  );
+  const shouldShowWorkingLoader = !isInlineBatchRevision && Boolean(
     loadingMessage ||
     isSubmitting ||
-    isSessionWorking
+    isSessionWorking ||
+    isHydratingFontNamePreview
   );
   const isHydratingReviewRun = Boolean(
     sessionId &&
@@ -129,6 +146,7 @@ export default function App() {
   const batchGridItems = ALPHABET.map((character) => {
     const normalizedCharacter = normalizeLetter(character);
     const normalizedImageUrl = normalizedGlyphMap.get(normalizedCharacter) ?? "";
+    const isPending = pendingBatchLetters.includes(normalizedCharacter);
     const seedReference = seedReferences.find((reference) => normalizeLetter(reference.character) === normalizedCharacter);
     const generatedItem = batchItems.find((item) => normalizeLetter(item.target_character) === normalizedCharacter);
     if (normalizedImageUrl) {
@@ -137,6 +155,7 @@ export default function App() {
         character: normalizedCharacter,
         imageUrl: normalizedImageUrl,
         alt: normalizedCharacter,
+        isPending,
       };
     }
     if (generatedItem) {
@@ -145,6 +164,7 @@ export default function App() {
         character: normalizedCharacter,
         imageUrl: generatedItem.generated_image_data_url,
         alt: normalizedCharacter,
+        isPending,
       };
     }
     if (seedReference) {
@@ -153,6 +173,7 @@ export default function App() {
         character: normalizedCharacter,
         imageUrl: seedReference.previewUrl,
         alt: normalizedCharacter,
+        isPending,
       };
     }
     return {
@@ -160,6 +181,7 @@ export default function App() {
       character: normalizedCharacter,
       imageUrl: "",
       alt: normalizedCharacter,
+      isPending,
     };
   });
 
@@ -307,6 +329,7 @@ export default function App() {
     setFinalRenderImage("");
     setSeedReferences([]);
     setSelectedBatchLetters([]);
+    setPendingBatchLetters([]);
     setNormalizedExportGlyphs([]);
     setReferenceBlob(null);
     setDrawingData(null);
@@ -318,6 +341,7 @@ export default function App() {
     setReviewTabsOpen(false);
     setErrorMessage("");
     setSessionError("");
+    batchRevisionStatusRef.current = "";
 
     let isActive = true;
     void fetchSession(sessionId)
@@ -515,7 +539,7 @@ export default function App() {
   }, [sessionId, session?.stage, session?.status, session?.latest_run_id, result?.run_id, batchResult]);
 
   useEffect(() => {
-    if (!session?.batch_run_ids?.length || batchResult) {
+    if (!session?.batch_run_ids?.length || sessionBatchRunIdsSignature === hydratedBatchRunIdsSignature) {
       return;
     }
 
@@ -542,7 +566,28 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [session?.batch_run_ids, session?.backend_version, session?.latest_run_id, session?.source_character, result, batchResult]);
+  }, [session?.batch_run_ids, sessionBatchRunIdsSignature, hydratedBatchRunIdsSignature, session?.backend_version, session?.latest_run_id, session?.source_character, result?.target_character]);
+
+  useEffect(() => {
+    const sessionStatus = session?.status ?? "";
+    const enteringBatchRevision = sessionStatus === "generating_batch" && batchRevisionStatusRef.current !== "generating_batch";
+    if (enteringBatchRevision) {
+      const pendingLetters = (session?.selected_revision_characters ?? []).map(normalizeLetter);
+      setPendingBatchLetters(pendingLetters);
+      if (pendingLetters.length > 0) {
+        setSelectedBatchLetters((current) =>
+          current.filter((character) => !pendingLetters.includes(normalizeLetter(character))),
+        );
+      }
+    }
+
+    const batchRevisionHydrated = sessionStatus !== "generating_batch" && sessionBatchRunIdsSignature === hydratedBatchRunIdsSignature;
+    if (pendingBatchLetters.length > 0 && batchRevisionHydrated) {
+      setPendingBatchLetters([]);
+    }
+
+    batchRevisionStatusRef.current = sessionStatus;
+  }, [session?.status, session?.selected_revision_characters, sessionBatchRunIdsSignature, hydratedBatchRunIdsSignature, pendingBatchLetters.length]);
 
   useEffect(() => {
     if (!session?.font_file_data_url || postBatchStage === "preview") {
@@ -590,6 +635,60 @@ export default function App() {
       window.cancelAnimationFrame(nextFrame);
     };
   }, [postBatchStage]);
+
+  useEffect(() => {
+    if (
+      !sessionId ||
+      !isAwaitingFontName ||
+      !result ||
+      !batchResult ||
+      seedReferences.length < 2 ||
+      postBatchStage === "preview"
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const nextNormalizedGlyphs = session?.normalized_glyphs?.length
+          ? session.normalized_glyphs
+          : normalizedExportGlyphs;
+        const fontBlob = previewFontBlob ?? await buildPreviewFontBlob(
+          sessionId,
+          seedReferences,
+          result,
+          batchResult,
+          nextNormalizedGlyphs,
+        );
+        await loadPreviewFont(fontBlob, previewFontFamily);
+        if (cancelled) {
+          return;
+        }
+        setPreviewFontBlob(fontBlob);
+        if (session?.normalized_glyphs?.length) {
+          setNormalizedExportGlyphs(session.normalized_glyphs);
+        }
+        setPostBatchStage("preview");
+      } catch {
+        // Ignore transient hydration failures; polling can retry after the next session update.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    sessionId,
+    isAwaitingFontName,
+    result,
+    batchResult,
+    seedReferences,
+    postBatchStage,
+    previewFontBlob,
+    session?.normalized_glyphs,
+    normalizedExportGlyphs,
+  ]);
 
   useEffect(() => {
     const shouldPollSession = Boolean(
@@ -739,7 +838,7 @@ export default function App() {
   }, [sessionId, seedReferences, result, batchResult]);
 
   useEffect(() => {
-    if (!sessionId || !batchResult) {
+    if (!sessionId || !batchResult || session?.status === "generating_batch") {
       return;
     }
 
@@ -758,7 +857,7 @@ export default function App() {
       .catch(() => {
         // Ignore transient sync errors; polling can recover.
       });
-  }, [sessionId, session?.selected_revision_characters, selectedBatchLetters, batchResult]);
+  }, [sessionId, session?.selected_revision_characters, session?.status, selectedBatchLetters, batchResult]);
 
   useEffect(() => {
     if (!session) {
@@ -1222,6 +1321,7 @@ export default function App() {
       const fontBlob = previewFontBlob ?? await buildPreviewFontBlob(sessionId, seedReferences, result, batchResult, normalizedExportGlyphs);
       setPreviewFontBlob(fontBlob);
       await loadPreviewFont(fontBlob, previewFontFamily);
+      setPostBatchStage("preview");
       const nextSession = await updateSession(sessionId, {
         instruction: "Now I'll compile your font and prepare it for download. What name would you like to give your font?",
         status: "awaiting_font_name",
@@ -1275,11 +1375,10 @@ export default function App() {
     }
   }
 
-  function handleBackToReviewSet() {
-    setPostBatchStage("grid");
-  }
-
   function toggleBatchLetterSelection(character: string) {
+    if (pendingBatchLetters.includes(character)) {
+      return;
+    }
     setSelectedBatchLetters((current) =>
       current.includes(character) ? current.filter((item) => item !== character) : [...current, character],
     );
@@ -1292,11 +1391,7 @@ export default function App() {
         {session ? (
           shouldShowWorkingLoader ? (
             <section className="session-loading-layout">
-              <div className="session-loading-dots" aria-label="Loading">
-                <span>.</span>
-                <span>.</span>
-                <span>.</span>
-              </div>
+              <div className="session-loading-pulse" role="status" aria-label="Loading" />
             </section>
           ) : batchResult ? (
             <section className="session-review-layout">
@@ -1308,13 +1403,14 @@ export default function App() {
                         <div key={item.key} className="session-batch-cell">
                           <button
                             type="button"
-                            className={`session-batch-select${selectedBatchLetters.includes(item.character) ? " is-selected" : ""}`}
-                            aria-label={`Select ${item.character}`}
+                            className={`session-batch-select${selectedBatchLetters.includes(item.character) ? " is-selected" : ""}${item.isPending ? " is-pending" : ""}`}
+                            aria-label={item.isPending ? `Revising ${item.character}` : `Select ${item.character}`}
+                            disabled={item.isPending}
                             onClick={() => toggleBatchLetterSelection(item.character)}
                           >
                             <span className="session-batch-select-overlay" aria-hidden="true" />
                           </button>
-                          {item.imageUrl ? (
+                          {item.imageUrl && !item.isPending ? (
                             <img className="session-batch-image" src={item.imageUrl} alt={item.alt} />
                           ) : null}
                         </div>
@@ -1348,14 +1444,6 @@ export default function App() {
                   <div className="session-review-actions session-review-actions-centered session-font-preview-actions">
                     <button
                       type="button"
-                      className="session-icon-button session-font-preview-action-button"
-                      onClick={handleBackToReviewSet}
-                      aria-label="Back"
-                    >
-                      <img src={backIcon} alt="" className="session-icon-image" />
-                    </button>
-                    <button
-                      type="button"
                       className="session-submit-button session-review-approve-button session-font-preview-action-button"
                       onClick={handleExportPartialFont}
                       aria-label="Download Font"
@@ -1368,11 +1456,7 @@ export default function App() {
             </section>
           ) : isHydratingReviewRun ? (
             <section className="session-loading-layout">
-              <div className="session-loading-dots" aria-label="Loading">
-                <span>.</span>
-                <span>.</span>
-                <span>.</span>
-              </div>
+              <div className="session-loading-pulse" role="status" aria-label="Loading" />
             </section>
           ) : result ? (
             <section className="session-review-layout">
