@@ -98,7 +98,7 @@ class RunStorage:
             "session_id": session_id,
             "status": "ready",
             "stage": "draw",
-            "instruction": 'I\'m ready with Fontsketch. We\'ll draw two letters and use them to generate the rest of the typeface.\n\nStart by drawing the letter "E".',
+            "instruction": "Start by drawing two sample letters. I'll use them to build the rest of your font.\n\nGo ahead and draw the first letter \"E\". Let me know when you're done.",
             "source_character": "E",
             "target_character": "E",
             "skeleton_image_data_url": "",

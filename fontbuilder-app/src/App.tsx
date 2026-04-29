@@ -109,7 +109,7 @@ export default function App() {
 
   async function endTransition() {
     const startedAt = transitionStartedAtRef.current;
-    const minimumVisibleMs = 450;
+    const minimumVisibleMs = 1200;
     const elapsed = startedAt ? Date.now() - startedAt : minimumVisibleMs;
     const remaining = Math.max(0, minimumVisibleMs - elapsed);
     if (remaining > 0) {
@@ -939,7 +939,7 @@ export default function App() {
         await updateSession(sessionId, {
           source_character: SECOND_SEED_CHARACTER,
           target_character: nextAlphabetCharacter(firstSeedCharacter),
-          instruction: 'I recorded your first letter. Now draw the letter "S".',
+          instruction: 'I recorded your first letter. Now draw the letter "S".\n\nLet me know when you\'re done and I\'ll generate the first sample character for you to review.',
           skeleton_image_data_url: "",
           status: "ready",
           stage: "draw",

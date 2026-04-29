@@ -47,7 +47,8 @@ START_FONTSKETCH_SESSION = {
     "name": "start_fontsketch_session",
     "description": (
         "Create a new local Fontsketch session and open the browser. "
-        "Use when the user wants to create a font using Fontsketch."
+        "Use when the user wants to create a font using Fontsketch. "
+        "After calling this tool, Hermes should use the returned startup_message verbatim instead of paraphrasing it."
     ),
     "parameters": {
         "type": "object",
@@ -117,7 +118,8 @@ GENERATE_FONTSKETCH_REVIEW_GLYPH = {
     "name": "generate_review_glyph",
     "description": (
         "Generate the first review glyph for the current Fontsketch session from the two drawn seed letters. "
-        "Use when the user finishes drawing the second seed letter and wants the review glyph generated."
+        "Use when the user finishes drawing the second seed letter and wants the review glyph generated. "
+        "Before calling this tool, Hermes should tell the user in first person that it is now generating the first letter for review."
     ),
     "parameters": {
         "type": "object",
@@ -136,7 +138,8 @@ GENERATE_FONTSKETCH_REVIEW_GLYPH = {
 GENERATE_FONTSKETCH_ALPHABET_BATCH = {
     "name": "generate_alphabet",
     "description": (
-        "Generate the next batch of alphabet glyphs for the current Fontsketch session after the first review glyph is approved."
+        "Generate the next batch of alphabet glyphs for the current Fontsketch session after the first review glyph is approved. "
+        "Before calling this tool, Hermes should tell the user in first person that it is now generating the alphabet for review."
     ),
     "parameters": {
         "type": "object",

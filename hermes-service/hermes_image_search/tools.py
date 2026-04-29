@@ -244,20 +244,41 @@ def start_fontsketch_session(args: dict, **kwargs) -> str:
 
     session_id = ""
     frontend_url = ""
-    message = ""
+    message_lines: list[str] = []
+    started_message = False
     for line in completed.stdout.splitlines():
         if line.startswith("Session ID: "):
             session_id = line.removeprefix("Session ID: ").strip()
         elif line.startswith("Open: "):
             frontend_url = line.removeprefix("Open: ").strip()
         elif line.strip():
-            message = line.strip()
+            started_message = True
+            message_lines.append(line.strip())
+        elif started_message:
+            message_lines.append("")
+
+    while message_lines and message_lines[-1] == "":
+        message_lines.pop()
+
+    message = "\n".join(message_lines).strip()
+    fallback_message = (
+        f"I've opened up Fontsketch in your browser:\n{frontend_url}\n\n"
+        'Start by drawing two sample letters. I\'ll use them to build the rest of your font.\n\n'
+        'Go ahead and draw the first letter "E". Let me know when you\'re done.'
+        if frontend_url
+        else
+        'Start by drawing two sample letters. I\'ll use them to build the rest of your font.\n\n'
+        'Go ahead and draw the first letter "E". Let me know when you\'re done.'
+    )
+
+    startup_message = message or fallback_message
 
     return json.dumps(
         {
             "session_id": session_id,
             "frontend_url": frontend_url,
-            "message": message or 'We\'ll draw two letters and use this to generate the rest of the typeface.\n\nStart by drawing the letter "E".',
+            "message": startup_message,
+            "startup_message": startup_message,
         }
     )
 
@@ -463,7 +484,7 @@ def generate_fontsketch_alphabet_batch(args: dict, **kwargs) -> str:
         {
             "status": "ready",
             "stage": "review",
-            "instruction": "The alphabet board is ready. If you'd like to request changes, select the letters you'd like to revise and let me know when you're ready. If everything looks good, tell me and I'll continue.",
+            "instruction": "Here is the full set of characters for your typeface. If you'd like to request changes, select the letters you'd like to revise and let me know when you're ready. If everything looks good, tell me \"continue\" and I'll move on.",
             "source_character": approved_character,
             "target_character": next_targets[0] if next_targets else _next_alphabet_character(approved_character),
             "batch_run_ids": batch_run_ids,
@@ -662,7 +683,10 @@ def submit_fontsketch_revision(args: dict, **kwargs) -> str:
                     "latest_run_id": latest_run_id,
                     "batch_run_ids": next_batch_run_ids,
                     "selected_revision_characters": [],
-                    "instruction": f"I've generated a revision for {target_label}. Let me know if it looks good or if you'd like another revision.",
+                    "instruction": (
+                        f"I've generated a revision for {target_label}. Let me know if it looks good or if you'd like another revision.\n\n"
+                        "If it looks good, I will go ahead and generate the full set of characters."
+                    ),
                 },
             )
         else:
@@ -684,7 +708,10 @@ def submit_fontsketch_revision(args: dict, **kwargs) -> str:
                     "stage": "review",
                     "latest_run_id": payload.get("run_id", latest_run_id),
                     "selected_revision_characters": [],
-                    "instruction": f"I've generated a revision for {target_label}. Let me know if it looks good or if you'd like another revision.",
+                    "instruction": (
+                        f"I've generated a revision for {target_label}. Let me know if it looks good or if you'd like another revision.\n\n"
+                        "If it looks good, I will go ahead and generate the full set of characters."
+                    ),
                 },
             )
     except urllib.error.URLError as exc:

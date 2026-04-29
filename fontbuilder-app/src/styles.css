@@ -4,7 +4,7 @@
   font-family: Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  --session-accent: #ff3b3f;
+  --session-accent: #ff3b3f; /* #ff3b3f */
   --session-accent-border: #111111;
   --session-icon-color: #111111;
   --app-ink: #111111;
@@ -139,6 +139,7 @@ textarea {
   line-height: 1;
   letter-spacing: 0.04em;
   color: var(--session-icon-color);
+  transform: translateY(-1rem);
 }
 
 .session-loading-message {
@@ -252,6 +253,12 @@ textarea {
   align-items: center;
   gap: 8px;
   flex: 0 0 auto;
+  transform-origin: left center;
+  transition: transform 120ms ease;
+}
+
+.session-seed-control:hover {
+  transform: scale(1.05);
 }
 
 .session-letter-input {
@@ -316,10 +323,19 @@ textarea {
   padding: 0;
   cursor: pointer;
   flex: 0 0 auto;
+  transition: transform 120ms ease;
+}
+
+.session-brush-button:hover {
+  transform: scale(1.05);
 }
 
 .session-brush-button.is-active {
   transform: scale(1.08);
+}
+
+.session-brush-button.is-active:hover {
+  transform: scale(1.12);
 }
 
 .session-brush-dot {

@@ -109,7 +109,7 @@ class FontSessionResponse(BaseModel):
     frontend_url: str
     status: str = "ready"
     stage: Literal["draw", "skeleton_preview", "review"] = "draw"
-    instruction: str = 'I\'m ready with Fontsketch. We\'ll draw two letters and use them to generate the rest of the typeface.\n\nStart by drawing the letter "E".'
+    instruction: str = "Start by drawing two sample letters. I'll use them to build the rest of your font.\n\nGo ahead and draw the first letter \"E\". Let me know when you're done."
     source_character: str = "E"
     target_character: str = "E"
     correction: str = ""
