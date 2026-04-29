@@ -586,21 +586,25 @@ def submit_fontsketch_revision(args: dict, **kwargs) -> str:
 
     session_id = session_payload["session_id"]
     target_letters = session_payload.get("selected_revision_characters", []) or [session_payload.get("target_character", "")]
+    seed_references = session_payload.get("seed_references", []) or []
+    if len(seed_references) < 2:
+        return json.dumps({"error": "Fontsketch needs both seed letters before I can apply that revision."})
+
+    normalized_targets = [_normalize_letter(letter, "") for letter in target_letters if letter]
+    target_label = ", ".join(normalized_targets) or _normalize_letter(session_payload.get("target_character", "F"), "F")
+    is_batch_revision = bool(session_payload.get("selected_revision_characters"))
+    working_status = "generating_batch" if is_batch_revision else "generating_single"
     try:
-        updated_payload = _patch_session(
+        _patch_session(
             session_id,
             {
-                "status": "regenerate_requested",
+                "status": working_status,
                 "correction": correction,
-                "instruction": f'I am applying that change to {", ".join([_normalize_letter(letter, "") for letter in target_letters if letter])} now.',
+                "instruction": f"I am applying that change to {target_label} now.",
             },
         )
     except urllib.error.URLError as exc:
         return json.dumps({"error": f"Failed to update Fontsketch session: {exc}"})
-
-    seed_references = session_payload.get("seed_references", []) or []
-    if len(seed_references) < 2:
-        return json.dumps({"error": "Fontsketch needs both seed letters before I can apply that revision."})
 
     primary_seed = seed_references[0]
     secondary_seed = seed_references[1]
@@ -609,80 +613,80 @@ def submit_fontsketch_revision(args: dict, **kwargs) -> str:
     batch_run_ids = session_payload.get("batch_run_ids", []) or []
 
     try:
-      if session_payload.get("selected_revision_characters"):
-          revised_runs: list[dict] = []
-          existing_runs_by_character: dict[str, str] = {}
-          if latest_run_id:
-              latest_run = _load_run(latest_run_id)
-              existing_runs_by_character[_normalize_letter(latest_run.get("target_character", ""), "")] = latest_run_id
-          for run_id in batch_run_ids:
-              run = _load_run(run_id)
-              existing_runs_by_character[_normalize_letter(run.get("target_character", ""), "")] = run_id
+        if is_batch_revision:
+            revised_runs: list[dict] = []
+            existing_runs_by_character: dict[str, str] = {}
+            if latest_run_id:
+                latest_run = _load_run(latest_run_id)
+                existing_runs_by_character[_normalize_letter(latest_run.get("target_character", ""), "")] = latest_run_id
+            for run_id in batch_run_ids:
+                run = _load_run(run_id)
+                existing_runs_by_character[_normalize_letter(run.get("target_character", ""), "")] = run_id
 
-          for character in [_normalize_letter(letter, "") for letter in target_letters if letter]:
-              revised_runs.append(
-                  _multipart_generate_request(
-                      session_id=session_id,
-                      primary_seed=primary_seed,
-                      secondary_seed=secondary_seed,
-                      source_character=source_character,
-                      target_character=character,
-                      correction=correction,
-                      previous_run_id=existing_runs_by_character.get(character, ""),
-                      brush_size=16,
-                  )
-              )
+            for character in [_normalize_letter(letter, "") for letter in target_letters if letter]:
+                revised_runs.append(
+                    _multipart_generate_request(
+                        session_id=session_id,
+                        primary_seed=primary_seed,
+                        secondary_seed=secondary_seed,
+                        source_character=source_character,
+                        target_character=character,
+                        correction=correction,
+                        previous_run_id=existing_runs_by_character.get(character, ""),
+                        brush_size=16,
+                    )
+                )
 
-          revised_by_character = {
-              _normalize_letter(run.get("target_character", ""), ""): run.get("run_id", "")
-              for run in revised_runs
-              if run.get("run_id")
-          }
-          next_batch_run_ids: list[str] = []
-          latest_character = ""
-          if latest_run_id:
-              latest_run = _load_run(latest_run_id)
-              latest_character = _normalize_letter(latest_run.get("target_character", ""), "")
-          if latest_character and revised_by_character.get(latest_character):
-              latest_run_id = revised_by_character[latest_character]
-          for run_id in batch_run_ids:
-              run = _load_run(run_id)
-              character = _normalize_letter(run.get("target_character", ""), "")
-              next_batch_run_ids.append(revised_by_character.get(character, run_id))
+            revised_by_character = {
+                _normalize_letter(run.get("target_character", ""), ""): run.get("run_id", "")
+                for run in revised_runs
+                if run.get("run_id")
+            }
+            next_batch_run_ids: list[str] = []
+            latest_character = ""
+            if latest_run_id:
+                latest_run = _load_run(latest_run_id)
+                latest_character = _normalize_letter(latest_run.get("target_character", ""), "")
+            if latest_character and revised_by_character.get(latest_character):
+                latest_run_id = revised_by_character[latest_character]
+            for run_id in batch_run_ids:
+                run = _load_run(run_id)
+                character = _normalize_letter(run.get("target_character", ""), "")
+                next_batch_run_ids.append(revised_by_character.get(character, run_id))
 
-          final_session = _patch_session(
-              session_id,
-              {
-                  "status": "ready",
-                  "stage": "review",
-                  "latest_run_id": latest_run_id,
-                  "batch_run_ids": next_batch_run_ids,
-                  "selected_revision_characters": [],
-                  "instruction": f'I\'ve generated a revision for {", ".join([_normalize_letter(letter, "") for letter in target_letters if letter])}. Let me know if it looks good or if you\'d like another revision.',
-              },
-          )
-      else:
-          target_character = _normalize_letter(session_payload.get("target_character", "F"), "F")
-          payload = _multipart_generate_request(
-              session_id=session_id,
-              primary_seed=primary_seed,
-              secondary_seed=secondary_seed,
-              source_character=source_character,
-              target_character=target_character,
-              correction=correction,
-              previous_run_id=latest_run_id,
-              brush_size=16,
-          )
-          final_session = _patch_session(
-              session_id,
-              {
-                  "status": "ready",
-                  "stage": "review",
-                  "latest_run_id": payload.get("run_id", latest_run_id),
-                  "selected_revision_characters": [],
-                  "instruction": f'I\'ve generated a revision for {target_character}. Let me know if it looks good or if you\'d like another revision.',
-              },
-          )
+            final_session = _patch_session(
+                session_id,
+                {
+                    "status": "ready",
+                    "stage": "review",
+                    "latest_run_id": latest_run_id,
+                    "batch_run_ids": next_batch_run_ids,
+                    "selected_revision_characters": [],
+                    "instruction": f"I've generated a revision for {target_label}. Let me know if it looks good or if you'd like another revision.",
+                },
+            )
+        else:
+            target_character = _normalize_letter(session_payload.get("target_character", "F"), "F")
+            payload = _multipart_generate_request(
+                session_id=session_id,
+                primary_seed=primary_seed,
+                secondary_seed=secondary_seed,
+                source_character=source_character,
+                target_character=target_character,
+                correction=correction,
+                previous_run_id=latest_run_id,
+                brush_size=16,
+            )
+            final_session = _patch_session(
+                session_id,
+                {
+                    "status": "ready",
+                    "stage": "review",
+                    "latest_run_id": payload.get("run_id", latest_run_id),
+                    "selected_revision_characters": [],
+                    "instruction": f"I've generated a revision for {target_label}. Let me know if it looks good or if you'd like another revision.",
+                },
+            )
     except urllib.error.URLError as exc:
         return json.dumps({"error": f"Failed to apply Fontsketch revision: {exc}"})
 

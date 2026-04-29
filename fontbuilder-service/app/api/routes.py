@@ -1,6 +1,7 @@
 import io
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 
 from app.core.config import get_backend_version
@@ -27,13 +28,20 @@ orchestrator = GenerationOrchestrator()
 storage = RunStorage()
 
 
+def _set_no_store(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+
+
 @router.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @router.post("/api/v1/sessions", response_model=FontSessionResponse)
-async def create_session(payload: FontSessionCreateRequest) -> FontSessionResponse:
+async def create_session(payload: FontSessionCreateRequest, response: Response) -> FontSessionResponse:
+    _set_no_store(response)
     session_id = storage.create_session()
     session = storage.read_session(session_id) or {}
     frontend_base_url = payload.frontend_base_url.rstrip("/")
@@ -61,7 +69,8 @@ async def create_session(payload: FontSessionCreateRequest) -> FontSessionRespon
 
 
 @router.get("/api/v1/sessions/{session_id}", response_model=FontSessionResponse)
-async def get_session(session_id: str) -> FontSessionResponse:
+async def get_session(session_id: str, response: Response) -> FontSessionResponse:
+    _set_no_store(response)
     session = storage.read_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -89,7 +98,8 @@ async def get_session(session_id: str) -> FontSessionResponse:
 
 
 @router.patch("/api/v1/sessions/{session_id}", response_model=FontSessionResponse)
-async def update_session(session_id: str, payload: FontSessionUpdateRequest) -> FontSessionResponse:
+async def update_session(session_id: str, payload: FontSessionUpdateRequest, response: Response) -> FontSessionResponse:
+    _set_no_store(response)
     session = storage.update_session(session_id, payload.model_dump())
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -117,7 +127,8 @@ async def update_session(session_id: str, payload: FontSessionUpdateRequest) -> 
 
 
 @router.post("/api/v1/sessions/{session_id}/approve", response_model=FontSessionResponse)
-async def approve_session(session_id: str) -> FontSessionResponse:
+async def approve_session(session_id: str, response: Response) -> FontSessionResponse:
+    _set_no_store(response)
     session = storage.approve_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -145,7 +156,8 @@ async def approve_session(session_id: str) -> FontSessionResponse:
 
 
 @router.post("/api/v1/sessions/{session_id}/edit-request", response_model=FontSessionResponse)
-async def request_session_edit(session_id: str, payload: FontSessionEditRequest) -> FontSessionResponse:
+async def request_session_edit(session_id: str, payload: FontSessionEditRequest, response: Response) -> FontSessionResponse:
+    _set_no_store(response)
     session = storage.request_session_edit(session_id, payload.selected_revision_characters)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -180,7 +192,8 @@ async def create_skeleton_preview(payload: SkeletonPreviewRequest) -> SkeletonPr
         raise HTTPException(status_code=400, detail="target_character must be a single character")
 
     try:
-        skeleton_image_data_url = render_skeleton_preview(
+        skeleton_image_data_url = await run_in_threadpool(
+            render_skeleton_preview,
             payload.drawing,
             structural_mode=payload.structural_mode,
         )
@@ -249,7 +262,8 @@ async def generate_run(
             if second_source_character.strip():
                 additional_source_characters.append(second_source_character.strip())
     try:
-        return orchestrator.generate(
+        return await run_in_threadpool(
+            orchestrator.generate,
             reference_filename=reference_glyph.filename or "reference_glyph.png",
             reference_media_type=reference_glyph.content_type or "image/png",
             reference_bytes=reference_bytes,
@@ -284,7 +298,8 @@ async def generate_many(
     if not targets:
         raise HTTPException(status_code=400, detail="target_characters must contain at least one target")
     try:
-        return orchestrator.generate_many(
+        return await run_in_threadpool(
+            orchestrator.generate_many,
             reference_filename=reference_glyph.filename or "reference_glyph.png",
             reference_media_type=reference_glyph.content_type or "image/png",
             reference_bytes=reference_bytes,
@@ -300,7 +315,8 @@ async def generate_many(
 
 
 @router.get("/api/v1/runs/{run_id}", response_model=GlyphGenerationResponse)
-async def get_run(run_id: str) -> GlyphGenerationResponse:
+async def get_run(run_id: str, response: Response) -> GlyphGenerationResponse:
+    _set_no_store(response)
     run = orchestrator.load_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -311,7 +327,10 @@ async def get_run(run_id: str) -> GlyphGenerationResponse:
 async def export_outline_set(payload: GlyphOutlineExportRequest) -> StreamingResponse:
     if not payload.glyphs:
         raise HTTPException(status_code=400, detail="glyphs must contain at least one item")
-    archive_bytes = build_outline_svg_zip([item.model_dump() for item in payload.glyphs])
+    archive_bytes = await run_in_threadpool(
+        build_outline_svg_zip,
+        [item.model_dump() for item in payload.glyphs],
+    )
     filename = f"fontsketch-outline-set-{payload.session_id or 'export'}.zip"
     return StreamingResponse(
         io.BytesIO(archive_bytes),
@@ -327,7 +346,10 @@ async def normalize_glyph_set(payload: GlyphOutlineExportRequest) -> GlyphNormal
     return GlyphNormalizationResponse(
         backend_version=get_backend_version(),
         session_id=payload.session_id,
-        glyphs=normalize_glyph_images([item.model_dump() for item in payload.glyphs]),
+        glyphs=await run_in_threadpool(
+            normalize_glyph_images,
+            [item.model_dump() for item in payload.glyphs],
+        ),
     )
 
 
@@ -335,7 +357,10 @@ async def normalize_glyph_set(payload: GlyphOutlineExportRequest) -> GlyphNormal
 async def export_partial_font(payload: GlyphOutlineExportRequest) -> StreamingResponse:
     if not payload.glyphs:
         raise HTTPException(status_code=400, detail="glyphs must contain at least one item")
-    font_bytes = build_partial_ttf([item.model_dump() for item in payload.glyphs])
+    font_bytes = await run_in_threadpool(
+        build_partial_ttf,
+        [item.model_dump() for item in payload.glyphs],
+    )
     filename = f"fontsketch-partial-{payload.session_id or 'export'}.ttf"
     return StreamingResponse(
         io.BytesIO(font_bytes),

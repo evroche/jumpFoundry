@@ -87,9 +87,11 @@ export default function App() {
   const hydratingRunIdRef = useRef("");
   const isAwaitingEditPrompt = session?.status === "awaiting_hermes_edit_prompt";
   const isAwaitingFontName = session?.status === "awaiting_font_name";
+  const isSessionWorking = Boolean(session && isWorkingSessionStatus(session.status));
   const shouldShowWorkingLoader = Boolean(
     loadingMessage ||
-    isSubmitting
+    isSubmitting ||
+    isSessionWorking
   );
   const isHydratingReviewRun = Boolean(
     sessionId &&
@@ -354,6 +356,30 @@ export default function App() {
       isActive = false;
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+
+    const sessionSeedCharacters = JSON.stringify(
+      (session.seed_references ?? []).map((reference) => normalizeLetter(reference.character)),
+    );
+    const localSeedCharacters = JSON.stringify(
+      seedReferences.map((reference) => normalizeLetter(reference.character)),
+    );
+
+    if (
+      session.seed_references?.length &&
+      sessionSeedCharacters !== localSeedCharacters
+    ) {
+      setSeedReferences(hydrateSeedReferences(session.seed_references));
+    }
+
+    if (!referenceBlob && session.current_drawing_image_data_url) {
+      setReferenceBlob(dataUrlToBlob(session.current_drawing_image_data_url));
+    }
+  }, [session, seedReferences, referenceBlob]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -713,155 +739,6 @@ export default function App() {
   }, [sessionId, seedReferences, result, batchResult]);
 
   useEffect(() => {
-    if (
-      !sessionId ||
-      !session ||
-      session.status !== "regenerate_requested" ||
-      !result ||
-      batchResult ||
-      seedReferences.length < 2 ||
-      isSubmitting
-    ) {
-      return;
-    }
-
-    const correctionKey = `${session.latest_run_id ?? ""}:${session.correction ?? ""}`;
-    if (!session.correction || handledRegenerationRef.current === correctionKey) {
-      return;
-    }
-
-    handledRegenerationRef.current = correctionKey;
-    const primarySeed = seedReferences[0];
-    const secondarySeed = seedReferences[1];
-    const brushSizeForRevision = drawingData?.brush_size ?? brushSize;
-
-    void (async () => {
-      beginTransition(`I’m revising "${result.target_character}" now. Hang tight while I generate the updated letter.`);
-      setIsSubmitting(true);
-      setErrorMessage("");
-      try {
-        const nextResult = await submitGlyphGeneration(
-          primarySeed.blob,
-          primarySeed.character,
-          result.target_character,
-          session.correction ?? "",
-          result.run_id,
-          sessionId,
-          "final",
-          brushSizeForRevision,
-          [toAdditionalReference(secondarySeed)],
-        );
-        hydratedRunIdRef.current = nextResult.run_id;
-        hydratingRunIdRef.current = "";
-        setResult(nextResult);
-        setReviewTab("skeleton");
-      } catch (error) {
-        setErrorMessage(error instanceof Error ? error.message : "Unknown error");
-      } finally {
-        setIsSubmitting(false);
-        await endTransition();
-      }
-    })();
-  }, [sessionId, session, result, batchResult, seedReferences, isSubmitting, drawingData?.brush_size, brushSize]);
-
-  useEffect(() => {
-    if (
-      !sessionId ||
-      !session ||
-      session.status !== "regenerate_requested" ||
-      !batchResult ||
-      seedReferences.length < 2 ||
-      isSubmitting
-    ) {
-      return;
-    }
-
-    const selectedRevisionCharacters = (session.selected_revision_characters ?? []).map(normalizeLetter);
-    if (selectedRevisionCharacters.length === 0 || !session.correction) {
-      return;
-    }
-
-    const correctionKey = `${selectedRevisionCharacters.join(",")}:${session.correction}`;
-    if (handledRegenerationRef.current === correctionKey) {
-      return;
-    }
-
-    handledRegenerationRef.current = correctionKey;
-    const primarySeed = seedReferences[0];
-    const secondarySeed = seedReferences[1];
-    const brushSizeForRevision = drawingData?.brush_size ?? brushSize;
-
-    void (async () => {
-      beginTransition(
-        `I’m revising ${formatCharacterList(selectedRevisionCharacters)} now. Hang tight while I generate the updated letters.`,
-      );
-      setIsSubmitting(true);
-      setErrorMessage("");
-      try {
-        const revisedRuns: RunResponse[] = [];
-        for (const character of selectedRevisionCharacters) {
-          const existingRun = normalizeLetter(result?.target_character ?? "") === character
-            ? result
-            : batchResult.items.find((item) => normalizeLetter(item.target_character) === character);
-          const nextRun = await submitGlyphGeneration(
-            primarySeed.blob,
-            primarySeed.character,
-            character,
-            session.correction ?? "",
-            existingRun?.run_id ?? "",
-            sessionId,
-            "final",
-            brushSizeForRevision,
-            [toAdditionalReference(secondarySeed)],
-          );
-          revisedRuns.push(nextRun);
-        }
-
-        const revisedByCharacter = new Map(
-          revisedRuns.map((item) => [normalizeLetter(item.target_character), item]),
-        );
-        const revisedResult = result && revisedByCharacter.get(normalizeLetter(result.target_character));
-        if (revisedResult) {
-          setResult(revisedResult);
-          setReviewTab("skeleton");
-        }
-
-        const mergedBatchItems = new Map(
-          batchResult.items.map((item) => [normalizeLetter(item.target_character), item]),
-        );
-        for (const item of revisedRuns) {
-          if (normalizeLetter(item.target_character) !== normalizeLetter(result?.target_character ?? "")) {
-            mergedBatchItems.set(normalizeLetter(item.target_character), item);
-          }
-        }
-
-        const nextBatchItems = Array.from(mergedBatchItems.values()).sort(
-          (left, right) => ALPHABET.indexOf(normalizeLetter(left.target_character)) - ALPHABET.indexOf(normalizeLetter(right.target_character)),
-        );
-        setBatchResult({
-          ...batchResult,
-          target_characters: nextBatchItems.map((item) => normalizeLetter(item.target_character)),
-          items: nextBatchItems,
-        });
-        setSelectedBatchLetters([]);
-
-        const nextSession = await updateSession(sessionId, {
-          status: "ready",
-          stage: "review",
-          instruction: `I’ve generated revisions for ${formatCharacterList(selectedRevisionCharacters)}. Let me know if you’d like any more changes.`,
-          selected_revision_characters: [],
-        });
-        setSession(nextSession);
-      } catch (error) {
-        setErrorMessage(error instanceof Error ? error.message : "Unknown error");
-      } finally {
-        setIsSubmitting(false);
-        await endTransition();
-      }
-    })();
-  }, [sessionId, session, batchResult, result, seedReferences, isSubmitting, drawingData?.brush_size, brushSize]);
-
-  useEffect(() => {
     if (!sessionId || !batchResult) {
       return;
     }
@@ -895,18 +772,18 @@ export default function App() {
     if (handledAdvanceRequestRef.current || isSubmitting) {
       return;
     }
+    if (
+      result ||
+      batchResult ||
+      seedReferences.length > 0 ||
+      (session.seed_references?.length ?? 0) > 0
+    ) {
+      return;
+    }
 
     handledAdvanceRequestRef.current = true;
     void (async () => {
       try {
-        if (batchResult) {
-          await handlePrepareFontPreview();
-          return;
-        }
-        if (result && seedReferences.length >= 2) {
-          await handleApprove();
-          return;
-        }
         await generateFromReference();
       } catch {
         handledAdvanceRequestRef.current = false;
@@ -920,8 +797,11 @@ export default function App() {
       handledPreviewRequestRef.current = false;
       return;
     }
-    if (session.status !== "preview_requested" || session.font_file_data_url) {
+    if (session.status !== "preview_requested") {
       handledPreviewRequestRef.current = false;
+      return;
+    }
+    if (!session.font_file_data_url && (!result || !batchResult || seedReferences.length < 2)) {
       return;
     }
     if (handledPreviewRequestRef.current || isSubmitting) {
@@ -1038,32 +918,42 @@ export default function App() {
     }
 
     if (seedReferences.length === 0) {
-      const firstSeedCharacter = normalizeLetter(sourceCharacter || FIRST_SEED_CHARACTER);
-      setSeedReferences([
-        {
-          character: firstSeedCharacter,
-          blob: referenceBlob,
-          previewUrl: URL.createObjectURL(referenceBlob),
-        },
-      ]);
-      setSourceCharacter(SECOND_SEED_CHARACTER);
-      setTargetCharacter(nextAlphabetCharacter(firstSeedCharacter));
-      setSkeletonPreview(null);
-      setSkeletonPreviewSignature("");
-      setDrawStageTab("draw");
-      sessionCanvasRef.current?.clear();
-      await updateSession(sessionId, {
-        source_character: SECOND_SEED_CHARACTER,
-        target_character: nextAlphabetCharacter(firstSeedCharacter),
-        instruction: 'I recorded your first letter. Now draw the letter "S".',
-        skeleton_image_data_url: "",
-        status: "ready",
-        stage: "draw",
-        selected_revision_characters: [],
-        batch_run_ids: [],
-        normalized_glyphs: [],
-        font_file_data_url: "",
-      });
+      setIsSubmitting(true);
+      beginTransition("I’m recording your first letter and moving to the next drawing step now.");
+      setErrorMessage("");
+      try {
+        const firstSeedCharacter = normalizeLetter(sourceCharacter || FIRST_SEED_CHARACTER);
+        setSeedReferences([
+          {
+            character: firstSeedCharacter,
+            blob: referenceBlob,
+            previewUrl: URL.createObjectURL(referenceBlob),
+          },
+        ]);
+        setSourceCharacter(SECOND_SEED_CHARACTER);
+        setTargetCharacter(nextAlphabetCharacter(firstSeedCharacter));
+        setSkeletonPreview(null);
+        setSkeletonPreviewSignature("");
+        setDrawStageTab("draw");
+        sessionCanvasRef.current?.clear();
+        await updateSession(sessionId, {
+          source_character: SECOND_SEED_CHARACTER,
+          target_character: nextAlphabetCharacter(firstSeedCharacter),
+          instruction: 'I recorded your first letter. Now draw the letter "S".',
+          skeleton_image_data_url: "",
+          status: "ready",
+          stage: "draw",
+          selected_revision_characters: [],
+          batch_run_ids: [],
+          normalized_glyphs: [],
+          font_file_data_url: "",
+        });
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "Unknown error");
+      } finally {
+        setIsSubmitting(false);
+        await endTransition();
+      }
       return;
     }
 
@@ -1347,16 +1237,26 @@ export default function App() {
   }
 
   async function handleOpenFontPreview() {
-    if (!sessionId || seedReferences.length < 2 || !result || !batchResult) {
+    if (!sessionId || !session) {
+      return;
+    }
+
+    if (!session.font_file_data_url && (seedReferences.length < 2 || !result || !batchResult)) {
       setErrorMessage("Generate the two source letters and the resulting set first so the font preview has all glyphs.");
       return;
     }
 
     setIsSubmitting(true);
+    beginTransition(session.instruction || "I’m opening the final preview now.");
     setErrorMessage("");
 
     try {
-      const fontBlob = previewFontBlob ?? await buildPreviewFontBlob(sessionId, seedReferences, result, batchResult, normalizedExportGlyphs);
+      const fontBlob = previewFontBlob
+        ?? (
+          session.font_file_data_url
+            ? dataUrlToBlob(session.font_file_data_url)
+            : await buildPreviewFontBlob(sessionId, seedReferences, result as RunResponse, batchResult as BatchResponse, normalizedExportGlyphs)
+        );
       setPreviewFontBlob(fontBlob);
       await loadPreviewFont(fontBlob, previewFontFamily);
       const nextSession = await updateSession(sessionId, {
@@ -1371,6 +1271,7 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Unknown error");
     } finally {
       setIsSubmitting(false);
+      await endTransition();
     }
   }
 
@@ -1396,9 +1297,6 @@ export default function App() {
                 <span>.</span>
                 <span>.</span>
               </div>
-              <p className="session-loading-message">
-                {loadingMessage || "Working on it now."}
-              </p>
             </section>
           ) : batchResult ? (
             <section className="session-review-layout">
@@ -1856,6 +1754,16 @@ async function buildNormalizedExportGlyphs(
   const glyphs = await buildExportGlyphs(seedReferences, result, batchResult);
   const normalized = await normalizeGlyphSet(sessionId, glyphs);
   return normalized.glyphs;
+}
+
+function hydrateSeedReferences(seedReferences: GlyphOutlineExportItem[]): SeedReference[] {
+  return seedReferences
+    .filter((reference) => Boolean(reference.image_data_url))
+    .map((reference) => ({
+      character: normalizeLetter(reference.character),
+      blob: dataUrlToBlob(reference.image_data_url),
+      previewUrl: reference.image_data_url,
+    }));
 }
 
 function toAdditionalReference(reference: SeedReference): AdditionalReferenceInput {

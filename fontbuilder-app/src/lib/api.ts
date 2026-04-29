@@ -173,7 +173,9 @@ export async function submitGlyphGeneration(
 }
 
 export async function fetchSession(sessionId: string): Promise<SessionResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/sessions/${sessionId}`);
+  const response = await fetch(`${API_BASE_URL}/api/v1/sessions/${sessionId}?t=${Date.now()}`, {
+    cache: "no-store",
+  });
   if (!response.ok) {
     throw new Error("Failed to load session");
   }
@@ -181,7 +183,10 @@ export async function fetchSession(sessionId: string): Promise<SessionResponse> 
 }
 
 export async function fetchRun(runId: string, signal?: AbortSignal): Promise<RunResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/runs/${runId}`, { signal });
+  const response = await fetch(`${API_BASE_URL}/api/v1/runs/${runId}?t=${Date.now()}`, {
+    signal,
+    cache: "no-store",
+  });
   if (!response.ok) {
     throw new Error("Failed to load run");
   }
