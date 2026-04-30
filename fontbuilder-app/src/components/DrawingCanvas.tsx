@@ -30,6 +30,7 @@ type DrawingCanvasProps = {
   showActions?: boolean;
   viewMode?: DrawingViewMode;
   overlay?: ReactNode;
+  isHidden?: boolean;
 };
 
 export type DrawingCanvasHandle = {
@@ -50,6 +51,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
   showActions = true,
   viewMode = "draw",
   overlay = null,
+  isHidden = false,
 }, ref) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [strokes, setStrokes] = useState<DrawingStroke[]>([]);
@@ -64,7 +66,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
     }
 
     renderDrawing(context, size, strokes, currentStrokeRef.current, viewMode, null);
-  }, [size, strokes, viewMode]);
+  }, [size, strokes, viewMode, isHidden]);
 
   useEffect(() => {
     if (!onVectorChange) {

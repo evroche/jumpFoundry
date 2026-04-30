@@ -73,8 +73,6 @@ export default function App() {
   const [normalizedExportGlyphs, setNormalizedExportGlyphs] = useState<GlyphOutlineExportItem[]>([]);
   const [brushSize, setBrushSize] = useState(16);
   const [drawStageTab, setDrawStageTab] = useState<"draw" | "vector" | "skeleton">("draw");
-  const [drawTabsOpen, setDrawTabsOpen] = useState(false);
-  const [reviewTabsOpen, setReviewTabsOpen] = useState(false);
   const [reviewTab, setReviewTab] = useState<"skeleton" | "vector" | "final">("skeleton");
   const [interpretedVectorImage, setInterpretedVectorImage] = useState("");
   const [finalRenderImage, setFinalRenderImage] = useState("");
@@ -183,53 +181,35 @@ export default function App() {
       isPending,
     };
   });
+  const isSkeletonDrawView = drawStageTab === "skeleton" && Boolean(skeletonPreviewImage);
 
   const drawStageTabs = (
-    <div className={`session-frame-tabs-shell ${drawTabsOpen ? "is-open" : "is-collapsed"}`}>
-      {drawTabsOpen ? (
-        <div className="session-frame-tabs">
-          <button
-            type="button"
-            className={`session-view-toggle-button${drawStageTab === "draw" ? " is-active" : ""}`}
-            onClick={() => handleDrawStageTabChange("draw")}
-          >
-            D
-          </button>
-          <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
-          <button
-            type="button"
-            className={`session-view-toggle-button${drawStageTab === "vector" ? " is-active" : ""}`}
-            onClick={() => handleDrawStageTabChange("vector")}
-          >
-            V
-          </button>
-          <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
-          <button
-            type="button"
-            className={`session-view-toggle-button${drawStageTab === "skeleton" ? " is-active" : ""}`}
-            onClick={() => handleDrawStageTabChange("skeleton")}
-          >
-            S
-          </button>
-          <button
-            type="button"
-            className="session-frame-toggle-button"
-            aria-label="Close view controls"
-            onClick={() => setDrawTabsOpen(false)}
-          >
-            -
-          </button>
-        </div>
-      ) : (
+    <div className="session-frame-tabs-shell">
+      <div className="session-frame-tabs">
         <button
           type="button"
-          className="session-frame-toggle-button"
-          aria-label="Open view controls"
-          onClick={() => setDrawTabsOpen(true)}
+          className={`session-view-toggle-button${drawStageTab === "draw" ? " is-active" : ""}`}
+          onClick={() => handleDrawStageTabChange("draw")}
         >
-          +
+          D
         </button>
-      )}
+        <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
+        <button
+          type="button"
+          className={`session-view-toggle-button${drawStageTab === "vector" ? " is-active" : ""}`}
+          onClick={() => handleDrawStageTabChange("vector")}
+        >
+          V
+        </button>
+        <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
+        <button
+          type="button"
+          className={`session-view-toggle-button${drawStageTab === "skeleton" ? " is-active" : ""}`}
+          onClick={() => handleDrawStageTabChange("skeleton")}
+        >
+          S
+        </button>
+      </div>
     </div>
   );
 
@@ -295,43 +275,24 @@ export default function App() {
   }
 
   const reviewTabs = (
-    <div className={`session-frame-tabs-shell ${reviewTabsOpen ? "is-open" : "is-collapsed"}`}>
-      {reviewTabsOpen ? (
-        <div className="session-frame-tabs">
-          <button
-            type="button"
-            className={`session-view-toggle-button${reviewTab === "skeleton" ? " is-active" : ""}`}
-            onClick={() => setReviewTab("skeleton")}
-          >
-            A
-          </button>
-          <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
-          <button
-            type="button"
-            className={`session-view-toggle-button${reviewTab === "vector" ? " is-active" : ""}`}
-            onClick={() => setReviewTab("vector")}
-          >
-            V
-          </button>
-          <button
-            type="button"
-            className="session-frame-toggle-button"
-            aria-label="Close view controls"
-            onClick={() => setReviewTabsOpen(false)}
-          >
-            -
-          </button>
-        </div>
-      ) : (
+    <div className="session-frame-tabs-shell">
+      <div className="session-frame-tabs">
         <button
           type="button"
-          className="session-frame-toggle-button"
-          aria-label="Open view controls"
-          onClick={() => setReviewTabsOpen(true)}
+          className={`session-view-toggle-button${reviewTab === "skeleton" ? " is-active" : ""}`}
+          onClick={() => setReviewTab("skeleton")}
         >
-          +
+          A
         </button>
-      )}
+        <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
+        <button
+          type="button"
+          className={`session-view-toggle-button${reviewTab === "vector" ? " is-active" : ""}`}
+          onClick={() => setReviewTab("vector")}
+        >
+          V
+        </button>
+      </div>
     </div>
   );
 
@@ -361,8 +322,6 @@ export default function App() {
     setPostBatchStage("grid");
     setReviewTab("skeleton");
     setDrawStageTab("draw");
-    setDrawTabsOpen(false);
-    setReviewTabsOpen(false);
     setErrorMessage("");
     setSessionError("");
     let isActive = true;
@@ -1521,12 +1480,13 @@ export default function App() {
                     {drawingData?.brush_label ?? brushLabelForSize(brushSize)} · {strokeCount} strokes · {pointCount} pts
                   </div>
                 ) : null}
-                {drawStageTab === "skeleton" && skeletonPreviewImage ? (
+                {isSkeletonDrawView ? (
                   <section className="session-review-frame session-inline-skeleton-frame">
                     {drawStageTabs}
                     <img className="session-result-image" src={skeletonPreviewImage} alt={`Skeleton preview for ${targetCharacter}`} />
                   </section>
-                  ) : (
+                ) : null}
+                <div style={isSkeletonDrawView ? { display: "none" } : undefined}>
                     <DrawingCanvas
                       key={`${sessionId || "local"}-${sourceCharacter}`}
                       ref={sessionCanvasRef}
@@ -1538,8 +1498,9 @@ export default function App() {
                       showActions={false}
                       viewMode={drawStageTab === "vector" ? "vector" : "draw"}
                       overlay={drawStageTabs}
+                      isHidden={isSkeletonDrawView}
                     />
-                  )}
+                </div>
                 <div className="session-draw-controls">
                   <div className="session-seed-control">
                     <input
