@@ -8,6 +8,7 @@ from app.core.config import get_backend_version
 from app.schemas.glyph import (
     AsyncRevisionBatchRequest,
     AsyncRevisionBatchResponse,
+    FontPackageExportRequest,
     FontSessionEditRequest,
     FontSessionCreateRequest,
     FontSessionResponse,
@@ -17,12 +18,13 @@ from app.schemas.glyph import (
     GlyphNormalizationResponse,
     GlyphOutlineExportRequest,
     GlyphVectorizationResponse,
+    PartialFontExportRequest,
     SkeletonPreviewRequest,
     SkeletonPreviewResponse,
 )
 from app.services.async_revision_jobs import AsyncRevisionJobService
 from app.services.file_storage import RunStorage
-from app.services.font_export import build_partial_ttf
+from app.services.font_export import build_font_package_zip, build_partial_ttf
 from app.services.outline_export import build_outline_svg_zip, normalize_glyph_images
 from app.services.orchestrator import GenerationOrchestrator
 from app.services.skeleton_renderer import render_skeleton_preview
@@ -360,16 +362,43 @@ async def normalize_glyph_set(payload: GlyphOutlineExportRequest) -> GlyphNormal
 
 
 @router.post("/api/v1/export-partial-font")
-async def export_partial_font(payload: GlyphOutlineExportRequest) -> StreamingResponse:
+async def export_partial_font(payload: PartialFontExportRequest) -> StreamingResponse:
     if not payload.glyphs:
         raise HTTPException(status_code=400, detail="glyphs must contain at least one item")
     font_bytes = await run_in_threadpool(
         build_partial_ttf,
         [item.model_dump() for item in payload.glyphs],
+        payload.family_name,
+        payload.style_name,
+        payload.weight_class,
     )
-    filename = f"fontsketch-partial-{payload.session_id or 'export'}.ttf"
+    filename = f"{(payload.family_name.strip() or 'fontsketch').replace(' ', '-')}-{(payload.style_name.strip() or 'Regular').replace(' ', '-')}.ttf"
     return StreamingResponse(
         io.BytesIO(font_bytes),
         media_type="font/ttf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/api/v1/export-font-package")
+async def export_font_package(payload: FontPackageExportRequest) -> StreamingResponse:
+    if not payload.variants:
+        raise HTTPException(status_code=400, detail="variants must contain at least one font variant")
+    package_bytes = await run_in_threadpool(
+        build_font_package_zip,
+        [
+            {
+                "style_name": variant.style_name,
+                "weight_class": variant.weight_class,
+                "glyphs": [item.model_dump() for item in variant.glyphs],
+            }
+            for variant in payload.variants
+        ],
+        payload.family_name,
+    )
+    filename = f"{(payload.family_name.strip() or 'fontsketch').replace(' ', '-')}-package.zip"
+    return StreamingResponse(
+        io.BytesIO(package_bytes),
+        media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

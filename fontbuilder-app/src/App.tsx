@@ -15,6 +15,7 @@ import smallerIcon from "./assets/material-icons/smallerCOMPACT.svg";
 import undoIcon from "./assets/material-icons/undoCOMPACT.svg";
 import {
   exportPartialFont,
+  exportFontPackage,
   fetchRun,
   fetchSession,
   normalizeGlyphSet,
@@ -26,6 +27,7 @@ import {
   updateSession,
   type AdditionalReferenceInput,
   type BatchResponse,
+  type FontVariantExportItem,
   type GlyphOutlineExportItem,
   type RunResponse,
   type SkeletonPreviewResponse,
@@ -33,6 +35,7 @@ import {
 } from "./lib/api";
 
 const SESSION_CANVAS_SIZE = 720;
+const BATCH_RENDER_BRUSH_STEP = 6;
 const BRUSH_OPTIONS = [
   { value: 32, label: "Large" },
   { value: 19, label: "Medium" },
@@ -45,6 +48,20 @@ const SAMPLE_REVIEW_CHARACTER_OFFSET = 8;
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 const EXTRA_GLYPHS = ["\\", ".", "\""] as const;
 const GLYPH_GRID_ORDER = [...ALPHABET, ...EXTRA_GLYPHS];
+
+type PreviewWeightKey = "light" | "regular" | "medium" | "bold";
+
+const PREVIEW_WEIGHT_DEFINITIONS: Array<{
+  key: PreviewWeightKey;
+  label: string;
+  weightClass: number;
+  brushOffsetSteps: number;
+}> = [
+  { key: "light", label: "300", weightClass: 300, brushOffsetSteps: -2 },
+  { key: "regular", label: "400", weightClass: 400, brushOffsetSteps: -1 },
+  { key: "medium", label: "600", weightClass: 600, brushOffsetSteps: 0 },
+  { key: "bold", label: "700", weightClass: 700, brushOffsetSteps: 2 },
+];
 
 type SeedReference = {
   character: string;
@@ -66,7 +83,6 @@ type PendingHermesConfirm = {
 
 export default function App() {
   const sessionId = readSessionIdFromPath();
-  const previewFontFamily = "FontsketchPreview";
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [sessionError, setSessionError] = useState("");
   const [sourceCharacter, setSourceCharacter] = useState(FIRST_SEED_CHARACTER);
@@ -87,6 +103,10 @@ export default function App() {
   const [previewText, setPreviewText] = useState("the quick brown fox jumped over the lazy dog");
   const [previewFontSizeOffset, setPreviewFontSizeOffset] = useState(0);
   const [previewFontBlob, setPreviewFontBlob] = useState<Blob | null>(null);
+  const [previewFontBlobs, setPreviewFontBlobs] = useState<Partial<Record<PreviewWeightKey, Blob>>>({});
+  const [previewFontVariants, setPreviewFontVariants] = useState<FontVariantExportItem[]>([]);
+  const [previewFontPackageBlob, setPreviewFontPackageBlob] = useState<Blob | null>(null);
+  const [previewWeightKey, setPreviewWeightKey] = useState<PreviewWeightKey>("medium");
   const [seedReferences, setSeedReferences] = useState<SeedReference[]>([]);
   const [selectedBatchLetters, setSelectedBatchLetters] = useState<string[]>([]);
   const [pendingBatchLetters, setPendingBatchLetters] = useState<string[]>([]);
@@ -338,14 +358,28 @@ export default function App() {
     if (event.key === "ArrowUp") {
       event.preventDefault();
       event.stopPropagation();
-      adjustPreviewFontSize("bigger");
+      stepPreviewWeight("next");
       return true;
     }
 
     if (event.key === "ArrowDown") {
       event.preventDefault();
       event.stopPropagation();
+      stepPreviewWeight("previous");
+      return true;
+    }
+
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      event.stopPropagation();
       adjustPreviewFontSize("smaller");
+      return true;
+    }
+
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      event.stopPropagation();
+      adjustPreviewFontSize("bigger");
       return true;
     }
 
@@ -379,6 +413,10 @@ export default function App() {
     setReferenceBlob(null);
     setDrawingData(null);
     setPreviewFontBlob(null);
+    setPreviewFontBlobs({});
+    setPreviewFontVariants([]);
+    setPreviewFontPackageBlob(null);
+    setPreviewWeightKey("medium");
     setPreviewFontSizeOffset(0);
     setPostBatchStage("grid");
     setReviewTab("final");
@@ -700,20 +738,27 @@ export default function App() {
   }, [session?.pending_revision_characters, session?.selected_revision_characters, session?.status]);
 
   useEffect(() => {
-    if (!session?.font_file_data_url || postBatchStage === "preview") {
+    if (
+      !session?.font_file_data_url ||
+      postBatchStage === "preview" ||
+      !sessionId ||
+      !result ||
+      !batchResult ||
+      seedReferences.length < 2
+    ) {
       return;
     }
 
     let cancelled = false;
     void (async () => {
       try {
-        const fontBlob = dataUrlToBlob(session.font_file_data_url);
-        await loadPreviewFont(fontBlob, previewFontFamily);
         if (cancelled) {
           return;
         }
-        setPreviewFontBlob(fontBlob);
-        setNormalizedExportGlyphs(session.normalized_glyphs ?? []);
+        await preparePreviewFontAssets();
+        if (cancelled) {
+          return;
+        }
         setPostBatchStage("preview");
       } catch {
         // Ignore transient font hydration failures; polling can retry after the next session update.
@@ -723,7 +768,12 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [session?.font_file_data_url, session?.normalized_glyphs, postBatchStage]);
+  }, [sessionId, session?.font_file_data_url, postBatchStage, result, batchResult, seedReferences, batchRenderBrushSize, seedVectorSignature, interpretedVectorImage]);
+
+  useEffect(() => {
+    const selectedBlob = previewFontBlobs[previewWeightKey] ?? null;
+    setPreviewFontBlob((current) => (current === selectedBlob ? current : selectedBlob));
+  }, [previewFontBlobs, previewWeightKey]);
 
   useEffect(() => {
     if (postBatchStage !== "preview") {
@@ -1501,20 +1551,14 @@ export default function App() {
     setErrorMessage("");
 
     try {
-      const fontBlob = previewFontBlob ?? await buildPreviewFontBlob(
-        sessionId,
-        seedReferences,
-        result,
-        batchResult,
-        normalizedExportGlyphs,
-        batchAdjustedFinalImages,
-      );
-      setPreviewFontBlob(fontBlob);
-      const normalizedFontName = (session?.font_name || "").trim();
-      const downloadName = normalizedFontName
-        ? `${slugifyFontName(normalizedFontName)}.ttf`
-        : `fontsketch-partial-${sessionId}.ttf`;
-      downloadBlob(fontBlob, downloadName);
+      const familyName = getExportFamilyName(session?.font_name, sessionId);
+      const variants = previewFontVariants.length > 0
+        ? previewFontVariants
+        : (await preparePreviewFontAssets()).variants;
+      const packageBlob = previewFontPackageBlob ?? await exportFontPackage(sessionId, familyName, variants);
+      setPreviewFontPackageBlob(packageBlob);
+      const downloadName = `${slugifyFontName(familyName)}-package.zip`;
+      downloadBlob(packageBlob, downloadName);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Unknown error");
     } finally {
@@ -1561,21 +1605,7 @@ export default function App() {
     setErrorMessage("");
 
     try {
-      const fontBlob = previewFontBlob
-        ?? (
-          session.font_file_data_url
-            ? dataUrlToBlob(session.font_file_data_url)
-            : await buildPreviewFontBlob(
-                sessionId,
-                seedReferences,
-                result as RunResponse,
-                batchResult as BatchResponse,
-                normalizedExportGlyphs,
-                batchAdjustedFinalImages,
-              )
-        );
-      setPreviewFontBlob(fontBlob);
-      await loadPreviewFont(fontBlob, previewFontFamily);
+      await preparePreviewFontAssets();
       const nextSession = await updateSession(sessionId, {
         instruction: `Your font${session?.font_name ? ` "${session.font_name}"` : ""} is ready. Click the download button to download and install it on your computer.`,
         status: "ready",
@@ -1603,6 +1633,19 @@ export default function App() {
 
   function adjustPreviewFontSize(direction: "smaller" | "bigger") {
     setPreviewFontSizeOffset((current) => current + (direction === "bigger" ? 6 : -6));
+  }
+
+  function stepPreviewWeight(direction: "next" | "previous") {
+    setPreviewWeightKey((current) => {
+      const currentIndex = PREVIEW_WEIGHT_DEFINITIONS.findIndex((definition) => definition.key === current);
+      if (currentIndex < 0) {
+        return "medium";
+      }
+      const nextIndex = direction === "next"
+        ? Math.min(PREVIEW_WEIGHT_DEFINITIONS.length - 1, currentIndex + 1)
+        : Math.max(0, currentIndex - 1);
+      return PREVIEW_WEIGHT_DEFINITIONS[nextIndex]?.key ?? current;
+    });
   }
 
   function postDrawConfirmedEvent() {
@@ -1747,9 +1790,83 @@ export default function App() {
 
   function adjustBatchRenderBrushSize(direction: "smaller" | "bigger") {
     setBatchRenderBrushSize((current) => {
-      const delta = direction === "bigger" ? 6 : -6;
-      return Math.max(4, Math.min(144, current + delta));
+      const delta = direction === "bigger" ? BATCH_RENDER_BRUSH_STEP : -BATCH_RENDER_BRUSH_STEP;
+      return clampRenderBrushSize(current + delta);
     });
+  }
+
+  async function preparePreviewFontAssets() {
+    if (!sessionId || !result || !batchResult || seedReferences.length < 2) {
+      throw new Error("Generate the glyph set first so the preview can prepare all weights.");
+    }
+
+    const familyName = getExportFamilyName(session?.font_name, sessionId);
+    const vectorSources = collectGlyphVectorSources(result, batchResult, seedVectorImages, interpretedVectorImage);
+    if (vectorSources.size === 0) {
+      throw new Error("The preview weights need vector traces before the font package can be prepared.");
+    }
+
+    const baseBrushSize = batchRenderBrushSize;
+    const variants = await Promise.all(
+      PREVIEW_WEIGHT_DEFINITIONS.map(async (definition) => {
+        const brushSize = previewWeightBrushSize(baseBrushSize, definition.key);
+        const glyphOverrides = await buildFinalGlyphOverridesForBrushSize(vectorSources, brushSize, SESSION_CANVAS_SIZE);
+        const glyphs = await buildNormalizedExportGlyphs(
+          sessionId,
+          seedReferences,
+          result,
+          batchResult,
+          glyphOverrides,
+        );
+        return {
+          key: definition.key,
+          label: definition.label,
+          weightClass: definition.weightClass,
+          glyphs,
+        } as const;
+      }),
+    );
+
+    const blobs = Object.fromEntries(
+      await Promise.all(
+        variants.map(async (variant) => [
+          variant.key,
+          await exportPartialFont(sessionId, variant.glyphs, {
+            familyName,
+            styleName: variant.label,
+            weightClass: variant.weightClass,
+          }),
+        ] as const),
+      ),
+    ) as Partial<Record<PreviewWeightKey, Blob>>;
+
+    await Promise.all(
+      variants.map(async (variant) => {
+        const blob = blobs[variant.key];
+        if (!blob) {
+          return;
+        }
+        await loadPreviewFont(blob, previewFontFamilyForWeight(variant.key));
+      }),
+    );
+
+    const packageVariants: FontVariantExportItem[] = variants.map((variant) => ({
+      style_name: variant.label,
+      weight_class: variant.weightClass,
+      glyphs: variant.glyphs,
+    }));
+
+    setPreviewFontVariants(packageVariants);
+    setPreviewFontBlobs(blobs);
+    setPreviewFontPackageBlob(null);
+    setPreviewWeightKey("medium");
+    setPreviewFontBlob(blobs.medium ?? null);
+
+    return {
+      familyName,
+      blobs,
+      variants: packageVariants,
+    };
   }
 
   if (sessionId) {
@@ -1843,12 +1960,31 @@ export default function App() {
                         });
                       }}
                       style={{
-                        fontFamily: `"${previewFontFamily}", serif`,
+                        fontFamily: `"${previewFontFamilyForWeight(previewWeightKey)}", serif`,
                         fontSize: `calc(clamp(126px, 19.5vw, 288px) + ${previewFontSizeOffset}px)`,
                       }}
                     />
                   </section>
                   <div className="session-review-actions session-review-actions-centered session-font-preview-actions">
+                    <div className="session-seed-control session-font-weight-control">
+                      <input
+                        type="text"
+                        className="session-letter-input session-font-weight-input"
+                        value={previewWeightLabel(previewWeightKey)}
+                        readOnly
+                        aria-label="Preview weight"
+                        tabIndex={-1}
+                      />
+                      <div className="session-letter-stepper">
+                        <button type="button" className="session-step-button" onClick={() => stepPreviewWeight("next")} aria-label="Heavier weight">
+                          <img src={letterUpIcon} alt="" className="session-step-icon" />
+                        </button>
+                        <button type="button" className="session-step-button" onClick={() => stepPreviewWeight("previous")} aria-label="Lighter weight">
+                          <img src={letterDownIcon} alt="" className="session-step-icon" />
+                        </button>
+                      </div>
+                    </div>
+                    <span className="session-controls-separator" aria-hidden="true" />
                     <button
                       type="button"
                       className="session-icon-button session-font-preview-action-button"
@@ -1865,6 +2001,7 @@ export default function App() {
                     >
                       <img src={biggerIcon} alt="" className="session-icon-image" />
                     </button>
+                    <span className="session-controls-separator" aria-hidden="true" />
                     <button
                       type="button"
                       className="session-submit-button session-review-approve-button session-font-preview-action-button"
@@ -2135,6 +2272,73 @@ function alphabetCharacterOffset(character: string, steps: number): string {
 
 function sampleReviewCharacter(character: string): string {
   return alphabetCharacterOffset(character, SAMPLE_REVIEW_CHARACTER_OFFSET);
+}
+
+function previewWeightLabel(weightKey: PreviewWeightKey): string {
+  return PREVIEW_WEIGHT_DEFINITIONS.find((definition) => definition.key === weightKey)?.label ?? "600";
+}
+
+function previewWeightBrushSize(baseBrushSize: number, weightKey: PreviewWeightKey): number {
+  const definition = PREVIEW_WEIGHT_DEFINITIONS.find((item) => item.key === weightKey);
+  const offsetSteps = definition?.brushOffsetSteps ?? 0;
+  return clampRenderBrushSize(baseBrushSize + offsetSteps * BATCH_RENDER_BRUSH_STEP);
+}
+
+function previewFontFamilyForWeight(weightKey: PreviewWeightKey): string {
+  return `FontsketchPreview-${weightKey}`;
+}
+
+function clampRenderBrushSize(value: number): number {
+  return Math.max(4, Math.min(144, value));
+}
+
+function getExportFamilyName(fontName: string | undefined, sessionId: string): string {
+  const normalized = (fontName ?? "").trim();
+  return normalized || `Fontsketch ${sessionId}`;
+}
+
+function collectGlyphVectorSources(
+  result: RunResponse,
+  batchResult: BatchResponse,
+  seedVectorImages: Record<string, string>,
+  reviewVectorImage: string,
+): Map<string, string> {
+  const vectorSources = new Map<string, string>();
+  const reviewCharacter = normalizeLetter(result.target_character);
+  const reviewVectorSource = reviewVectorImage || result.interpreted_vector_data_url;
+  if (reviewVectorSource) {
+    vectorSources.set(reviewCharacter, sanitizeVectorSvgDataUrl(reviewVectorSource));
+  }
+  for (const item of batchResult.items) {
+    const character = normalizeLetter(item.target_character);
+    if (item.interpreted_vector_data_url) {
+      vectorSources.set(character, sanitizeVectorSvgDataUrl(item.interpreted_vector_data_url));
+    }
+  }
+  for (const [character, dataUrl] of Object.entries(seedVectorImages)) {
+    if (dataUrl) {
+      vectorSources.set(normalizeLetter(character), sanitizeVectorSvgDataUrl(dataUrl));
+    }
+  }
+  return vectorSources;
+}
+
+async function buildFinalGlyphOverridesForBrushSize(
+  vectorSources: Map<string, string>,
+  brushSize: number,
+  sourceCanvasSize: number,
+): Promise<Record<string, string>> {
+  const entries = await Promise.all(
+    Array.from(vectorSources.entries()).map(async ([character, dataUrl]) => {
+      const trace = parseVectorSvgDataUrl(dataUrl);
+      if (!trace) {
+        return [character, ""] as const;
+      }
+      const finalImageDataUrl = await renderBrushPreview(trace, brushSize, sourceCanvasSize);
+      return [character, finalImageDataUrl] as const;
+    }),
+  );
+  return Object.fromEntries(entries.filter(([, imageUrl]) => Boolean(imageUrl)));
 }
 
 function nextAlphabetCharacters(character: string, count: number): string[] {

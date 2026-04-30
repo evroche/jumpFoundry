@@ -246,6 +246,7 @@ textarea {
   color: var(--session-icon-color);
   text-align: center;
   font-size: 10.71rem;
+  font-weight: 500;
   line-height: 1;
   outline: none;
   box-shadow: none;
@@ -699,6 +700,36 @@ textarea {
   gap: var(--session-toolbar-gap);
   background: transparent;
   z-index: 3;
+}
+
+.session-font-weight-control {
+  position: relative;
+  transform-origin: center center;
+  gap: 0;
+}
+
+.session-font-weight-control:hover {
+  transform: none;
+}
+
+.session-font-weight-input {
+  width: 320px;
+  min-width: 320px;
+  height: 204px;
+  font-size: 10.71rem;
+  line-height: 0.94;
+  text-transform: none;
+  letter-spacing: 0;
+  text-align: right;
+  padding: 0 0 6px 0;
+  pointer-events: none;
+}
+
+.session-font-weight-control .session-letter-stepper {
+  position: relative;
+  z-index: 2;
+  margin-left: -28px;
+  overflow: visible;
 }
 
 .session-font-preview-actions .session-icon-button,

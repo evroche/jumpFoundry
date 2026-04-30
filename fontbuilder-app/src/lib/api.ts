@@ -90,6 +90,12 @@ export type GlyphOutlineExportItem = {
   image_data_url: string;
 };
 
+export type FontVariantExportItem = {
+  style_name: string;
+  weight_class: number;
+  glyphs: GlyphOutlineExportItem[];
+};
+
 export type GlyphNormalizationResponse = {
   backend_version: string;
   session_id: string;
@@ -506,18 +512,59 @@ export async function normalizeGlyphSet(
   return response.json();
 }
 
-export async function exportPartialFont(sessionId: string, glyphs: GlyphOutlineExportItem[]): Promise<Blob> {
+export async function exportPartialFont(
+  sessionId: string,
+  glyphs: GlyphOutlineExportItem[],
+  options: {
+    familyName?: string;
+    styleName?: string;
+    weightClass?: number;
+  } = {},
+): Promise<Blob> {
   const response = await fetch(`${API_BASE_URL}/api/v1/export-partial-font`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       session_id: sessionId,
       glyphs,
+      family_name: options.familyName ?? "Fontsketch Test",
+      style_name: options.styleName ?? "Regular",
+      weight_class: options.weightClass ?? 400,
     }),
   });
 
   if (!response.ok) {
     let message = "Failed to export partial font";
+    try {
+      const payload = await response.json();
+      message = payload.detail ?? message;
+    } catch {
+      const errorText = await response.text();
+      message = errorText || message;
+    }
+    throw new Error(message);
+  }
+
+  return response.blob();
+}
+
+export async function exportFontPackage(
+  sessionId: string,
+  familyName: string,
+  variants: FontVariantExportItem[],
+): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/export-font-package`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      session_id: sessionId,
+      family_name: familyName,
+      variants,
+    }),
+  });
+
+  if (!response.ok) {
+    let message = "Failed to export font package";
     try {
       const payload = await response.json();
       message = payload.detail ?? message;

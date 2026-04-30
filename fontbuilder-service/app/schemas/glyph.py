@@ -52,6 +52,26 @@ class GlyphOutlineExportRequest(BaseModel):
     glyphs: list[GlyphOutlineExportItem]
 
 
+class PartialFontExportRequest(BaseModel):
+    session_id: str = ""
+    glyphs: list[GlyphOutlineExportItem]
+    family_name: str = "Fontsketch Test"
+    style_name: str = "Regular"
+    weight_class: int = 400
+
+
+class FontPackageVariantRequest(BaseModel):
+    style_name: str
+    weight_class: int
+    glyphs: list[GlyphOutlineExportItem]
+
+
+class FontPackageExportRequest(BaseModel):
+    session_id: str = ""
+    family_name: str = "Fontsketch Test"
+    variants: list[FontPackageVariantRequest]
+
+
 class GlyphNormalizationResponse(BaseModel):
     backend_version: str
     session_id: str = ""

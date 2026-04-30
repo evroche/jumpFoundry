@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 from typing import Iterable
+import zipfile
 
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
@@ -16,7 +17,32 @@ SIDE_BEARING = 36
 TOP_PADDING = 24
 
 
-def build_partial_ttf(glyphs: list[dict[str, str]], family_name: str = "Fontsketch Test") -> bytes:
+def build_font_package_zip(
+    variants: list[dict[str, object]],
+    family_name: str = "Fontsketch Test",
+) -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for variant in variants:
+            style_name = str(variant.get("style_name") or "Regular").strip() or "Regular"
+            weight_class = int(variant.get("weight_class") or 400)
+            glyphs = list(variant.get("glyphs") or [])
+            font_bytes = build_partial_ttf(
+                glyphs,
+                family_name=family_name,
+                style_name=style_name,
+                weight_class=weight_class,
+            )
+            archive.writestr(f"{_slugify_font_name(family_name)}-{style_name}.ttf", font_bytes)
+    return output.getvalue()
+
+
+def build_partial_ttf(
+    glyphs: list[dict[str, str]],
+    family_name: str = "Fontsketch Test",
+    style_name: str = "Regular",
+    weight_class: int = 400,
+) -> bytes:
     glyph_map = {".notdef": _build_notdef_glyph()}
     metrics = {".notdef": (UPM, 0)}
     cmap: dict[int, str] = {}
@@ -46,9 +72,9 @@ def build_partial_ttf(glyphs: list[dict[str, str]], family_name: str = "Fontsket
     fb.setupNameTable(
         {
             "familyName": family_name,
-            "styleName": "Regular",
-            "fullName": f"{family_name} Regular",
-            "psName": family_name.replace(" ", "") + "-Regular",
+            "styleName": style_name,
+            "fullName": f"{family_name} {style_name}",
+            "psName": _slugify_font_name(family_name) + f"-{style_name}",
         }
     )
     fb.setupOS2(
@@ -56,6 +82,7 @@ def build_partial_ttf(glyphs: list[dict[str, str]], family_name: str = "Fontsket
         sTypoDescender=DESCENT,
         usWinAscent=ASCENT,
         usWinDescent=abs(DESCENT),
+        usWeightClass=max(1, min(weight_class, 1000)),
     )
     fb.setupPost()
     fb.setupMaxp()
@@ -113,3 +140,8 @@ def _advance_width(source_width: float, source_height: float) -> int:
     drawable_height = ASCENT - TOP_PADDING
     scale = drawable_height / max(source_height, 1.0)
     return max(240, int(round(SIDE_BEARING * 2 + source_width * scale)))
+
+
+def _slugify_font_name(value: str) -> str:
+    compact = "".join(character for character in value if character.isalnum())
+    return compact or "FontsketchTest"
