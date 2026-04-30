@@ -98,19 +98,16 @@ export default function App() {
     session?.stage === "review" &&
     session?.status === "generating_batch"
   );
-  const isHydratingFontNamePreview = Boolean(
+  const isWaitingForFontName = Boolean(
     sessionId &&
     isAwaitingFontName &&
-    result &&
-    batchResult &&
-    seedReferences.length >= 2 &&
     postBatchStage !== "preview"
   );
   const shouldShowWorkingLoader = !isInlineBatchRevision && Boolean(
     loadingMessage ||
     isSubmitting ||
     isSessionWorking ||
-    isHydratingFontNamePreview
+    isWaitingForFontName
   );
   const isHydratingReviewRun = Boolean(
     sessionId &&
@@ -661,60 +658,6 @@ export default function App() {
       window.cancelAnimationFrame(nextFrame);
     };
   }, [postBatchStage]);
-
-  useEffect(() => {
-    if (
-      !sessionId ||
-      !isAwaitingFontName ||
-      !result ||
-      !batchResult ||
-      seedReferences.length < 2 ||
-      postBatchStage === "preview"
-    ) {
-      return;
-    }
-
-    let cancelled = false;
-    void (async () => {
-      try {
-        const nextNormalizedGlyphs = session?.normalized_glyphs?.length
-          ? session.normalized_glyphs
-          : normalizedExportGlyphs;
-        const fontBlob = previewFontBlob ?? await buildPreviewFontBlob(
-          sessionId,
-          seedReferences,
-          result,
-          batchResult,
-          nextNormalizedGlyphs,
-        );
-        await loadPreviewFont(fontBlob, previewFontFamily);
-        if (cancelled) {
-          return;
-        }
-        setPreviewFontBlob(fontBlob);
-        if (session?.normalized_glyphs?.length) {
-          setNormalizedExportGlyphs(session.normalized_glyphs);
-        }
-        setPostBatchStage("preview");
-      } catch {
-        // Ignore transient hydration failures; polling can retry after the next session update.
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    sessionId,
-    isAwaitingFontName,
-    result,
-    batchResult,
-    seedReferences,
-    postBatchStage,
-    previewFontBlob,
-    session?.normalized_glyphs,
-    normalizedExportGlyphs,
-  ]);
 
   useEffect(() => {
     const shouldPollSession = Boolean(
@@ -1373,10 +1316,6 @@ export default function App() {
     setErrorMessage("");
 
     try {
-      const fontBlob = previewFontBlob ?? await buildPreviewFontBlob(sessionId, seedReferences, result, batchResult, normalizedExportGlyphs);
-      setPreviewFontBlob(fontBlob);
-      await loadPreviewFont(fontBlob, previewFontFamily);
-      setPostBatchStage("preview");
       const nextSession = await updateSession(sessionId, {
         instruction: "Now I'll compile your font and prepare it for download. What name would you like to give your font?",
         status: "awaiting_font_name",
