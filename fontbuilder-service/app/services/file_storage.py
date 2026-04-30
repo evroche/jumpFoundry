@@ -6,6 +6,9 @@ from uuid import uuid4
 
 from app.core.config import get_settings
 
+EXTRA_GLYPHS = {"\\", ".", "\""}
+SUPPORTED_GLYPHS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ") | EXTRA_GLYPHS
+
 
 class RunStorage:
     def __init__(self) -> None:
@@ -72,16 +75,16 @@ class RunStorage:
             return None
 
         selected = [
-            (character[:1] or "").upper()
+            self._normalize_session_character(character, "")
             for character in (selected_revision_characters or [])
-            if (character[:1] or "").isalpha()
+            if self._normalize_session_character(character, "")
         ]
         selected = list(dict.fromkeys(selected))
         target_character = (current.get("target_character") or "B").upper()
         pending = [
-            (character[:1] or "").upper()
+            self._normalize_session_character(character, "")
             for character in (current.get("pending_revision_characters") or [])
-            if (character[:1] or "").isalpha()
+            if self._normalize_session_character(character, "")
         ]
         pending = list(dict.fromkeys(pending))
         if selected and pending:
@@ -145,6 +148,11 @@ class RunStorage:
         if normalized == "Z":
             return "A"
         return chr(ord(normalized) + 1)
+
+    @staticmethod
+    def _normalize_session_character(character: str, fallback: str = "A") -> str:
+        normalized = (character[:1] or fallback).upper()
+        return normalized if normalized in SUPPORTED_GLYPHS else fallback
 
     def write_bytes(self, path: Path, content: bytes) -> None:
         path.write_bytes(content)

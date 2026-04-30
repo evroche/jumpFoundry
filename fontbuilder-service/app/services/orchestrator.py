@@ -48,19 +48,29 @@ class GenerationOrchestrator:
             generation_mode=generation_mode,
             additional_source_characters=additional_source_characters,
         )
-        generated_bytes, provider_response = self.images.edit_glyph(
-            reference_bytes,
-            reference_media_type,
-            prompt,
-            additional_reference_images=additional_reference_images,
-            previous_generated_image_bytes=previous_generated_image_bytes,
-        )
+        prompt_path = run_dir / "kimi" / "prompt.json"
+        write_json(prompt_path, {"prompt": prompt})
+        try:
+            generated_bytes, provider_response = self.images.edit_glyph(
+                reference_bytes,
+                reference_media_type,
+                prompt,
+                additional_reference_images=additional_reference_images,
+                previous_generated_image_bytes=previous_generated_image_bytes,
+            )
+        except Exception as exc:
+            (run_dir / "generated" / "error.txt").write_text(str(exc), encoding="utf-8")
+            raise
         analysis = None
         suggested_revision = ""
-        interpreted_vector_data_url, final_render_data_url = vectorize_centerline_and_render(
-            generated_bytes,
-            brush_size=brush_size,
-        )
+        try:
+            interpreted_vector_data_url, final_render_data_url = vectorize_centerline_and_render(
+                generated_bytes,
+                brush_size=brush_size,
+            )
+        except Exception as exc:
+            (run_dir / "vector" / "error.txt").write_text(str(exc), encoding="utf-8")
+            raise
         debug = [
             DebugEntry(
                 step="generate",
@@ -88,7 +98,6 @@ class GenerationOrchestrator:
         final_render_path = run_dir / "vector" / f"{target_character.upper()}_final.png.txt"
         manifest_path = run_dir / "manifest.json"
 
-        write_json(run_dir / "kimi" / "prompt.json", {"prompt": prompt})
         write_json(provider_path, provider_response)
         self.storage.write_bytes(generated_path, generated_bytes)
         interpreted_vector_path.write_text(interpreted_vector_data_url, encoding="utf-8")

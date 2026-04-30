@@ -6,10 +6,13 @@ from uuid import uuid4
 from app.services.file_storage import RunStorage
 from app.services.orchestrator import GenerationOrchestrator
 
+EXTRA_GLYPHS = {"\\", ".", "\""}
+SUPPORTED_GLYPHS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ") | EXTRA_GLYPHS
+
 
 def _normalize_letter(value: str, fallback: str = "A") -> str:
     normalized = (value[:1] or fallback).upper()
-    return normalized if normalized.isalpha() else fallback
+    return normalized if normalized in SUPPORTED_GLYPHS else fallback
 
 
 def _data_url_to_bytes(data_url: str) -> bytes:
@@ -53,7 +56,7 @@ class AsyncRevisionJobService:
     ) -> tuple[str, str, list[str]]:
         normalized_targets = [_normalize_letter(character, "") for character in target_characters if character]
         if not normalized_targets:
-            raise ValueError("target_characters must contain at least one valid letter.")
+            raise ValueError("target_characters must contain at least one valid glyph.")
 
         with self._lock:
             session = self.storage.read_session(session_id) or {}

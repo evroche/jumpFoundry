@@ -32,6 +32,8 @@ router = APIRouter()
 orchestrator = GenerationOrchestrator()
 storage = RunStorage()
 revision_jobs = AsyncRevisionJobService(storage=storage, orchestrator=orchestrator)
+EXTRA_GLYPHS = {"\\", ".", "\""}
+SUPPORTED_GLYPHS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ") | EXTRA_GLYPHS
 
 
 def _set_no_store(response: Response) -> None:
@@ -137,10 +139,10 @@ async def create_async_revision_batch(
     target_characters = []
     for character in payload.target_characters:
         normalized = (character[:1] or "").upper()
-        if normalized.isalpha() and normalized not in target_characters:
+        if normalized in SUPPORTED_GLYPHS and normalized not in target_characters:
             target_characters.append(normalized)
     if not target_characters:
-        raise HTTPException(status_code=400, detail="target_characters must contain at least one letter")
+        raise HTTPException(status_code=400, detail="target_characters must contain at least one supported glyph")
 
     try:
         job_id, instruction, accepted_targets = revision_jobs.submit_revision_batch(

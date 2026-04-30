@@ -3,6 +3,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 import hashlib
 import json
 from pathlib import Path
+import time
 
 import httpx
 
@@ -107,17 +108,39 @@ class OpenAIImagesClient:
             "output_format": "png",
             "input_fidelity": self.settings.openai_input_fidelity,
         }
-        with httpx.Client(timeout=180.0) as client:
-            response = client.post(
-                f"{self.base_url}/images/edits",
-                headers={**self.headers, "Content-Type": "application/json"},
-                json=payload,
-            )
-        if response.is_error:
-            raise RuntimeError(f"OpenAI Images API error {response.status_code}: {response.text}")
-        body = response.json()
-        image_base64 = body["data"][0]["b64_json"]
-        return base64.b64decode(image_base64), body
+        last_transport_error: httpx.HTTPError | None = None
+        last_runtime_error: RuntimeError | None = None
+        for attempt in range(3):
+            try:
+                with httpx.Client(timeout=180.0) as client:
+                    response = client.post(
+                        f"{self.base_url}/images/edits",
+                        headers={**self.headers, "Content-Type": "application/json"},
+                        json=payload,
+                    )
+            except httpx.HTTPError as exc:
+                last_transport_error = exc
+                if attempt >= 2:
+                    raise RuntimeError(f"OpenAI Images transport error: {exc}") from exc
+                time.sleep(0.8 * (attempt + 1))
+                continue
+
+            if response.is_error:
+                last_runtime_error = RuntimeError(f"OpenAI Images API error {response.status_code}: {response.text}")
+                if attempt >= 2 or response.status_code not in {408, 409, 429, 500, 502, 503, 504}:
+                    raise last_runtime_error
+                time.sleep(0.8 * (attempt + 1))
+                continue
+
+            body = response.json()
+            image_base64 = body["data"][0]["b64_json"]
+            return base64.b64decode(image_base64), body
+
+        if last_runtime_error is not None:
+            raise last_runtime_error
+        if last_transport_error is not None:
+            raise RuntimeError(f"OpenAI Images transport error: {last_transport_error}") from last_transport_error
+        raise RuntimeError("OpenAI Images request failed for an unknown reason")
 
 
 def _to_data_url(image_bytes: bytes, image_media_type: str) -> str:
@@ -133,6 +156,24 @@ def _extract_json_block(text: str) -> str:
     return text[start : end + 1]
 
 
+def _glyph_label(character: str) -> str:
+    normalized = (character[:1] or "").upper()
+    if normalized == "\\":
+        return 'the backslash character ("\\\\")'
+    if normalized == ".":
+        return 'the period character (".")'
+    if normalized == '"':
+        return 'the quotation mark character ("\\"")'
+    return f'the letter "{normalized}"'
+
+
+def _glyph_noun(character: str) -> str:
+    normalized = (character[:1] or "").upper()
+    if normalized in {'\\', ".", '"'}:
+        return "character"
+    return "letter"
+
+
 def build_generation_prompt(
     source_character: str,
     target_character: str,
@@ -141,13 +182,16 @@ def build_generation_prompt(
     generation_mode: str = "final",
     additional_source_characters: list[str] | None = None,
 ) -> str:
+    source_label = _glyph_label(source_character)
+    target_label = _glyph_label(target_character)
+    target_noun = _glyph_noun(target_character)
     normalized_additional_sources = [character[:1].upper() for character in (additional_source_characters or []) if character]
     if has_previous_generated_image:
         prompt = (
             "A second image is provided showing the previous draft of the target glyph. "
-            f'Revise that draft so it loosely represents the character "{target_character.upper()}". '
+            f"Revise that draft so it loosely represents {target_label}. "
             "Revise that draft to address the user's requested revisions. "
-            f'Prioritize implementing the user\'s revisions, even if it means it looks less like a traditional letter "{target_character.upper()}". '
+            f"Prioritize implementing the user's revisions, even if it means it looks less like a standard printed form of that {target_noun}. "
             "One isolated glyph only. No words, no extra symbols, no texture, no shadows, no border, no scene."
         )
         if correction:
@@ -156,24 +200,25 @@ def build_generation_prompt(
 
     if normalized_additional_sources:
         source_list = [source_character.upper(), *normalized_additional_sources]
-        joined_sources = ", ".join(f'"{character}"' for character in source_list[:-1])
+        source_labels = [_glyph_label(character) for character in source_list]
         if len(source_list) == 2:
-            source_description = f'Two reference images are provided depicting the letter characters "{source_list[0]}" and "{source_list[1]}". '
+            source_description = f"Two reference images are provided depicting {source_labels[0]} and {source_labels[1]}. "
         else:
             source_description = (
-                f"Reference images are provided depicting the letter characters {joined_sources}, "
-                f'and "{source_list[-1]}". '
+                "Reference images are provided depicting "
+                + ", ".join(source_labels[:-1])
+                + f", and {source_labels[-1]}. "
             )
         prompt = (
             "Your job is to create the next image in the series, based on the reference images provided. "
             + source_description +
-            f'Your job is to produce a new image that loosely represents the character "{target_character.upper()}". '
+            f"Your job is to produce a new image that loosely represents {target_label}. "
             "The output does not need to follow the rules of font design. "
             "Use the reference images together to infer the shared style system. "
             "Retain the line width and its consistency or variability. "
             "Retain the contour rhythm, slant of the letter, and any decorative appendages. "
             "Do not smooth the outline into a generic font letter. "
-            f'Prioritize emphasizing the distinctive qualities of the reference drawings even if it means it looks less like a traditional letter "{target_character.upper()}". '
+            f"Prioritize emphasizing the distinctive qualities of the reference drawings even if it means it looks less like a standard printed form of that {target_noun}. "
             "One isolated glyph only. No words, no extra symbols, no texture, no shadows, no border, no scene."
         )
         if correction:
@@ -182,14 +227,14 @@ def build_generation_prompt(
 
     prompt = (
         "Your job is to create the next image in the series, based on the image provided. "
-        f'The image provided is a drawing that loosely depicts the letter character "{source_character.upper()}". '
-        f'Your job is to produce a new image that loosely represents the character "{target_character.upper()}". '
+        f"The image provided is a drawing that loosely depicts {source_label}. "
+        f"Your job is to produce a new image that loosely represents {target_label}. "
         "The output does not need to follow the rules of font design. "
-        f'It should be legible as the new letter to the same degree the input image is legible as "{source_character.upper()}". '
+        "It should be legible as the new character to the same degree the input image is legible in its original form. "
         "Retain the line width and its consistency or variability. "
         "Retain the contour rhythm, slant of the letter, and any decorative appendages. "
         "Do not smooth the outline into a generic font letter. "
-        f'Prioritize emphasizing the distinctive qualities of the source drawing even if it means it looks less like a traditional letter "{target_character.upper()}". '
+        f"Prioritize emphasizing the distinctive qualities of the source drawing even if it means it looks less like a standard printed form of that {target_noun}. "
         "One isolated glyph only. No words, no extra symbols, no texture, no shadows, no border, no scene."
     )
     if correction:

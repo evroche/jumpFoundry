@@ -42,6 +42,8 @@ const FINAL_RENDER_BRUSH_SCALE = 2;
 const FIRST_SEED_CHARACTER = "E";
 const SECOND_SEED_CHARACTER = "S";
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+const EXTRA_GLYPHS = ["\\", ".", "\""] as const;
+const GLYPH_GRID_ORDER = [...ALPHABET, ...EXTRA_GLYPHS];
 
 type SeedReference = {
   character: string;
@@ -171,7 +173,7 @@ export default function App() {
   const normalizedGlyphMap = new Map(
     normalizedExportGlyphs.map((glyph) => [normalizeLetter(glyph.character), glyph.image_data_url]),
   );
-  const batchGridItems = ALPHABET.map((character) => {
+  const batchGridItems = GLYPH_GRID_ORDER.map((character) => {
     const normalizedCharacter = normalizeLetter(character);
     const normalizedImageUrl = normalizedGlyphMap.get(normalizedCharacter) ?? "";
     const isPending = pendingBatchLetters.includes(normalizedCharacter);
@@ -212,7 +214,7 @@ export default function App() {
       isPending,
     };
   });
-  const batchFinalGridItems = ALPHABET.map((character) => {
+  const batchFinalGridItems = GLYPH_GRID_ORDER.map((character) => {
     const normalizedCharacter = normalizeLetter(character);
     const isPending = pendingBatchLetters.includes(normalizedCharacter);
     const seedReference = seedReferences.find((reference) => normalizeLetter(reference.character) === normalizedCharacter);
@@ -249,7 +251,7 @@ export default function App() {
       isPending,
     };
   });
-  const batchVectorGridItems = ALPHABET.map((character) => {
+  const batchVectorGridItems = GLYPH_GRID_ORDER.map((character) => {
     const normalizedCharacter = normalizeLetter(character);
     const isPending = pendingBatchLetters.includes(normalizedCharacter);
     const seedReference = seedReferences.find((reference) => normalizeLetter(reference.character) === normalizedCharacter);
@@ -1396,7 +1398,7 @@ export default function App() {
 
     try {
       const approvedCharacter = result.target_character;
-      const nextTargets = nextAlphabetCharacters(approvedCharacter, 3);
+      const nextTargets = [...nextAlphabetCharacters(approvedCharacter, 3), ...EXTRA_GLYPHS];
       const items: RunResponse[] = [];
       const primarySeed = seedReferences[0];
       const secondarySeed = seedReferences[1];
@@ -2148,6 +2150,12 @@ function normalizeLetter(value: string): string {
   return next || FIRST_SEED_CHARACTER;
 }
 
+function glyphSortIndex(character: string): number {
+  const normalized = normalizeLetter(character);
+  const index = GLYPH_GRID_ORDER.indexOf(normalized);
+  return index >= 0 ? index : GLYPH_GRID_ORDER.length;
+}
+
 function brushLabelForSize(brushSize: number): string {
   if (brushSize >= 28) {
     return "Large";
@@ -2254,7 +2262,7 @@ async function buildExportGlyphs(
     });
   }
   return Array.from(dedupedGlyphs.values()).sort(
-    (left, right) => ALPHABET.indexOf(normalizeLetter(left.character)) - ALPHABET.indexOf(normalizeLetter(right.character)),
+    (left, right) => glyphSortIndex(normalizeLetter(left.character)) - glyphSortIndex(normalizeLetter(right.character)),
   );
 }
 

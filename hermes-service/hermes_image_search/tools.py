@@ -15,6 +15,8 @@ from .service.search import search_images as run_search
 
 
 BACKEND_BASE_URL = "http://127.0.0.1:8200"
+EXTRA_GLYPHS = ["\\", ".", "\""]
+SUPPORTED_GLYPHS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ") | set(EXTRA_GLYPHS)
 
 
 def search_images(args: dict, **kwargs) -> str:
@@ -103,7 +105,7 @@ def _load_run(run_id: str) -> dict:
 
 def _normalize_letter(value: str, fallback: str = "A") -> str:
     normalized = (value[:1] or fallback).upper()
-    return normalized if normalized.isalpha() else fallback
+    return normalized if normalized in SUPPORTED_GLYPHS else fallback
 
 
 def _next_alphabet_character(character: str) -> str:
@@ -417,7 +419,7 @@ def generate_fontsketch_review_glyph(args: dict, **kwargs) -> str:
     )
 
     try:
-        payload = _multipart_generate_request(
+        payload = _multipart_generate_request_with_retry(
             session_id=session_id,
             primary_seed=primary_seed,
             secondary_seed=secondary_seed,
@@ -428,6 +430,15 @@ def generate_fontsketch_review_glyph(args: dict, **kwargs) -> str:
             brush_size=16,
         )
     except urllib.error.URLError as exc:
+        _patch_session(
+            session_id,
+            {
+                "status": "ready",
+                "stage": "draw",
+                "instruction": "I couldn't generate the first sample just now. Please try again in a moment.",
+                "selected_revision_characters": [],
+            },
+        )
         return json.dumps({"error": f"Failed to generate Fontsketch review glyph: {exc}"})
 
     _patch_session(
@@ -481,6 +492,7 @@ def generate_fontsketch_alphabet_batch(args: dict, **kwargs) -> str:
     next_targets = [_next_alphabet_character(approved_character)]
     next_targets.append(_next_alphabet_character(next_targets[-1]))
     next_targets.append(_next_alphabet_character(next_targets[-1]))
+    next_targets.extend(EXTRA_GLYPHS)
     _patch_session(
         session_id,
         {
@@ -716,7 +728,7 @@ def submit_fontsketch_revision(args: dict, **kwargs) -> str:
             )
         else:
             target_character = _normalize_letter(session_payload.get("target_character", "F"), "F")
-            payload = _multipart_generate_request(
+            payload = _multipart_generate_request_with_retry(
                 session_id=session_id,
                 primary_seed=primary_seed,
                 secondary_seed=secondary_seed,
@@ -740,6 +752,16 @@ def submit_fontsketch_revision(args: dict, **kwargs) -> str:
                 },
             )
     except urllib.error.URLError as exc:
+        if not is_batch_revision:
+            _patch_session(
+                session_id,
+                {
+                    "status": "ready",
+                    "stage": "review",
+                    "instruction": "I couldn't apply that revision just now. Please try again in a moment.",
+                    "selected_revision_characters": [],
+                },
+            )
         return json.dumps({"error": f"Failed to apply Fontsketch revision: {exc}"})
 
     return json.dumps(
