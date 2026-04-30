@@ -72,11 +72,14 @@ export default function App() {
   const [selectedBatchLetters, setSelectedBatchLetters] = useState<string[]>([]);
   const [pendingBatchLetters, setPendingBatchLetters] = useState<string[]>([]);
   const [normalizedExportGlyphs, setNormalizedExportGlyphs] = useState<GlyphOutlineExportItem[]>([]);
+  const [seedVectorImages, setSeedVectorImages] = useState<Record<string, string>>({});
   const [seedFinalRenderImages, setSeedFinalRenderImages] = useState<Record<string, string>>({});
   const [brushSize, setBrushSize] = useState(16);
+  const [batchRenderBrushSize, setBatchRenderBrushSize] = useState(16);
+  const [batchAdjustedFinalImages, setBatchAdjustedFinalImages] = useState<Record<string, string>>({});
   const [drawStageTab, setDrawStageTab] = useState<"draw" | "vector" | "skeleton">("draw");
-  const [reviewTab, setReviewTab] = useState<"skeleton" | "vector" | "final">("skeleton");
-  const [batchViewTab, setBatchViewTab] = useState<"art" | "final">("art");
+  const [reviewTab, setReviewTab] = useState<"skeleton" | "vector" | "final">("final");
+  const [batchViewTab, setBatchViewTab] = useState<"art" | "vector" | "final">("final");
   const [interpretedVectorImage, setInterpretedVectorImage] = useState("");
   const [finalRenderImage, setFinalRenderImage] = useState("");
   const [isPreparingReviewArtifacts, setIsPreparingReviewArtifacts] = useState(false);
@@ -140,6 +143,13 @@ export default function App() {
   const batchItems = batchResult
     ? (result ? [result, ...batchResult.items] : batchResult.items)
     : [];
+  const batchVectorSourceSignature = JSON.stringify(
+    batchItems.map((item) => [
+      normalizeLetter(item.target_character),
+      item.interpreted_vector_data_url,
+    ]),
+  );
+  const seedVectorSignature = JSON.stringify(seedVectorImages);
   const normalizedGlyphMap = new Map(
     normalizedExportGlyphs.map((glyph) => [normalizeLetter(glyph.character), glyph.image_data_url]),
   );
@@ -193,7 +203,10 @@ export default function App() {
       return {
         key: `${generatedItem.run_id}-final`,
         character: normalizedCharacter,
-        imageUrl: generatedItem.final_render_data_url || generatedItem.generated_image_data_url,
+        imageUrl:
+          batchAdjustedFinalImages[normalizedCharacter]
+          || generatedItem.final_render_data_url
+          || generatedItem.generated_image_data_url,
         alt: `${normalizedCharacter} final render`,
         isPending,
       };
@@ -202,7 +215,10 @@ export default function App() {
       return {
         key: `seed-final-${normalizedCharacter}`,
         character: normalizedCharacter,
-        imageUrl: seedFinalRenderImages[normalizedCharacter] || seedReference.previewUrl,
+        imageUrl:
+          batchAdjustedFinalImages[normalizedCharacter]
+          || seedFinalRenderImages[normalizedCharacter]
+          || seedReference.previewUrl,
         alt: normalizedCharacter,
         isPending,
       };
@@ -215,37 +231,44 @@ export default function App() {
       isPending,
     };
   });
+  const batchVectorGridItems = ALPHABET.map((character) => {
+    const normalizedCharacter = normalizeLetter(character);
+    const isPending = pendingBatchLetters.includes(normalizedCharacter);
+    const seedReference = seedReferences.find((reference) => normalizeLetter(reference.character) === normalizedCharacter);
+    const generatedItem = batchItems.find((item) => normalizeLetter(item.target_character) === normalizedCharacter);
+    if (generatedItem) {
+      return {
+        key: `${generatedItem.run_id}-vector`,
+        character: normalizedCharacter,
+        imageUrl: generatedItem.interpreted_vector_data_url
+          ? sanitizeVectorSvgDataUrl(generatedItem.interpreted_vector_data_url)
+          : generatedItem.generated_image_data_url,
+        alt: `${normalizedCharacter} vector trace`,
+        isPending,
+      };
+    }
+    if (seedReference) {
+      return {
+        key: `seed-vector-${normalizedCharacter}`,
+        character: normalizedCharacter,
+        imageUrl: seedVectorImages[normalizedCharacter]
+          ? sanitizeVectorSvgDataUrl(seedVectorImages[normalizedCharacter])
+          : seedReference.previewUrl,
+        alt: `${normalizedCharacter} vector trace`,
+        isPending,
+      };
+    }
+    return {
+      key: `empty-vector-${normalizedCharacter}`,
+      character: normalizedCharacter,
+      imageUrl: "",
+      alt: normalizedCharacter,
+      isPending,
+    };
+  });
   const isSkeletonDrawView = drawStageTab === "skeleton" && Boolean(skeletonPreviewImage);
 
-  const drawStageTabs = (
-    <div className="session-frame-tabs-shell">
-      <div className="session-frame-tabs">
-        <button
-          type="button"
-          className={`session-view-toggle-button${drawStageTab === "draw" ? " is-active" : ""}`}
-          onClick={() => handleDrawStageTabChange("draw")}
-        >
-          D
-        </button>
-        <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
-        <button
-          type="button"
-          className={`session-view-toggle-button${drawStageTab === "vector" ? " is-active" : ""}`}
-          onClick={() => handleDrawStageTabChange("vector")}
-        >
-          V
-        </button>
-        <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
-        <button
-          type="button"
-          className={`session-view-toggle-button${drawStageTab === "skeleton" ? " is-active" : ""}`}
-          onClick={() => handleDrawStageTabChange("skeleton")}
-        >
-          S
-        </button>
-      </div>
-    </div>
-  );
+  const drawStageTabs = null;
 
   function stepSourceCharacter(direction: "next" | "previous") {
     setSourceCharacter((current) =>
@@ -308,57 +331,9 @@ export default function App() {
     return false;
   }
 
-  const reviewTabs = (
-    <div className="session-frame-tabs-shell">
-      <div className="session-frame-tabs">
-        <button
-          type="button"
-          className={`session-view-toggle-button${reviewTab === "skeleton" ? " is-active" : ""}`}
-          onClick={() => setReviewTab("skeleton")}
-        >
-          A
-        </button>
-        <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
-        <button
-          type="button"
-          className={`session-view-toggle-button${reviewTab === "vector" ? " is-active" : ""}`}
-          onClick={() => setReviewTab("vector")}
-        >
-          V
-        </button>
-        <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
-        <button
-          type="button"
-          className={`session-view-toggle-button${reviewTab === "final" ? " is-active" : ""}`}
-          onClick={() => setReviewTab("final")}
-        >
-          X
-        </button>
-      </div>
-    </div>
-  );
+  const reviewTabs = null;
 
-  const batchViewTabs = (
-    <div className="session-frame-tabs-shell">
-      <div className="session-frame-tabs">
-        <button
-          type="button"
-          className={`session-view-toggle-button${batchViewTab === "art" ? " is-active" : ""}`}
-          onClick={() => setBatchViewTab("art")}
-        >
-          A
-        </button>
-        <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
-        <button
-          type="button"
-          className={`session-view-toggle-button${batchViewTab === "final" ? " is-active" : ""}`}
-          onClick={() => setBatchViewTab("final")}
-        >
-          X
-        </button>
-      </div>
-    </div>
-  );
+  const batchViewTabs = null;
 
   useEffect(() => {
     if (!sessionId) {
@@ -385,8 +360,8 @@ export default function App() {
     setPreviewFontBlob(null);
     setPreviewFontSizeOffset(0);
     setPostBatchStage("grid");
-    setReviewTab("skeleton");
-    setBatchViewTab("art");
+    setReviewTab("final");
+    setBatchViewTab("final");
     setDrawStageTab("draw");
     setErrorMessage("");
     setSessionError("");
@@ -571,7 +546,7 @@ export default function App() {
         hydratedRunIdRef.current = runId;
         hydratingRunIdRef.current = "";
         setResult(nextRun);
-        setReviewTab("skeleton");
+        setReviewTab("final");
       })
       .catch(() => {
         if (abortController.signal.aborted) {
@@ -788,7 +763,7 @@ export default function App() {
     }
 
     if (result.interpreted_vector_data_url && result.final_render_data_url) {
-      setInterpretedVectorImage(result.interpreted_vector_data_url);
+      setInterpretedVectorImage(sanitizeVectorSvgDataUrl(result.interpreted_vector_data_url));
       setFinalRenderImage(result.final_render_data_url);
       setIsPreparingReviewArtifacts(false);
       return;
@@ -805,7 +780,7 @@ export default function App() {
         if (!isActive) {
           return;
         }
-        setInterpretedVectorImage(artifacts.vectorImageDataUrl);
+        setInterpretedVectorImage(sanitizeVectorSvgDataUrl(artifacts.vectorImageDataUrl));
         setFinalRenderImage(artifacts.finalImageDataUrl);
       })
       .catch((error) => {
@@ -829,6 +804,7 @@ export default function App() {
 
   useEffect(() => {
     if (seedReferences.length === 0) {
+      setSeedVectorImages({});
       setSeedFinalRenderImages({});
       return;
     }
@@ -843,17 +819,27 @@ export default function App() {
               16,
               SESSION_CANVAS_SIZE,
             );
-            return [normalizeLetter(reference.character), artifacts.finalImageDataUrl] as const;
+            return [normalizeLetter(reference.character), artifacts] as const;
           }),
         );
         if (!isActive) {
           return;
         }
-        setSeedFinalRenderImages(Object.fromEntries(renderedEntries));
+        setSeedVectorImages(
+          Object.fromEntries(
+            renderedEntries.map(([character, artifacts]) => [character, artifacts.vectorImageDataUrl]),
+          ),
+        );
+        setSeedFinalRenderImages(
+          Object.fromEntries(
+            renderedEntries.map(([character, artifacts]) => [character, artifacts.finalImageDataUrl]),
+          ),
+        );
       } catch {
         if (!isActive) {
           return;
         }
+        setSeedVectorImages({});
         setSeedFinalRenderImages({});
       }
     })();
@@ -862,6 +848,68 @@ export default function App() {
       isActive = false;
     };
   }, [seedReferences]);
+
+  useEffect(() => {
+    if (!batchResult?.accepted_run_id) {
+      return;
+    }
+    setBatchRenderBrushSize(drawingData?.brush_size ?? brushSize);
+  }, [batchResult?.accepted_run_id, drawingData?.brush_size, brushSize]);
+
+  useEffect(() => {
+    if (!batchResult) {
+      setBatchAdjustedFinalImages({});
+      return;
+    }
+
+    const vectorSources = new Map<string, string>();
+    for (const item of batchItems) {
+      const character = normalizeLetter(item.target_character);
+      if (item.interpreted_vector_data_url) {
+        vectorSources.set(character, sanitizeVectorSvgDataUrl(item.interpreted_vector_data_url));
+      }
+    }
+    for (const [character, dataUrl] of Object.entries(seedVectorImages)) {
+      if (dataUrl) {
+        vectorSources.set(normalizeLetter(character), sanitizeVectorSvgDataUrl(dataUrl));
+      }
+    }
+
+    if (vectorSources.size === 0) {
+      setBatchAdjustedFinalImages({});
+      return;
+    }
+
+    let isActive = true;
+    void Promise.all(
+      Array.from(vectorSources.entries()).map(async ([character, dataUrl]) => {
+        const trace = parseVectorSvgDataUrl(dataUrl);
+        if (!trace) {
+          return [character, ""] as const;
+        }
+        const finalImageDataUrl = await renderBrushPreview(trace, batchRenderBrushSize, SESSION_CANVAS_SIZE);
+        return [character, finalImageDataUrl] as const;
+      }),
+    )
+      .then((entries) => {
+        if (!isActive) {
+          return;
+        }
+        setBatchAdjustedFinalImages(
+          Object.fromEntries(entries.filter(([, imageUrl]) => Boolean(imageUrl))),
+        );
+      })
+      .catch(() => {
+        if (!isActive) {
+          return;
+        }
+        setBatchAdjustedFinalImages({});
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [batchResult, batchVectorSourceSignature, seedVectorSignature, batchRenderBrushSize]);
 
   useEffect(() => {
     if (!sessionId || !result || !batchResult || seedReferences.length < 2) {
@@ -1190,7 +1238,7 @@ export default function App() {
             }
           : current
       ));
-      setReviewTab("skeleton");
+      setReviewTab("final");
       setBatchResult(null);
       setDebugHistory((current) => [
         { at: new Date().toISOString(), data: nextResult.debug },
@@ -1296,7 +1344,7 @@ export default function App() {
         items,
       };
       setPostBatchStage("grid");
-      setBatchViewTab("art");
+      setBatchViewTab("final");
       setPreviewFontBlob(null);
       const nextSession = await updateSession(sessionId, {
         source_character: approvedCharacter,
@@ -1446,6 +1494,13 @@ export default function App() {
     setPreviewFontSizeOffset((current) => current + (direction === "bigger" ? 6 : -6));
   }
 
+  function adjustBatchRenderBrushSize(direction: "smaller" | "bigger") {
+    setBatchRenderBrushSize((current) => {
+      const delta = direction === "bigger" ? 6 : -6;
+      return Math.max(4, Math.min(144, current + delta));
+    });
+  }
+
   if (sessionId) {
     return (
       <main className="page-shell page-shell-session">
@@ -1462,7 +1517,11 @@ export default function App() {
                   <section className="session-review-frame session-batch-frame">
                     {batchViewTabs}
                     <div className="session-batch-grid">
-                      {(batchViewTab === "final" ? batchFinalGridItems : batchGridItems).map((item) => (
+                      {(batchViewTab === "final"
+                        ? batchFinalGridItems
+                        : batchViewTab === "vector"
+                          ? batchVectorGridItems
+                          : batchGridItems).map((item) => (
                         <div key={item.key} className="session-batch-cell">
                           <button
                             type="button"
@@ -1481,7 +1540,22 @@ export default function App() {
                     </div>
                   </section>
                   <div className="session-review-actions session-review-actions-centered">
-                    <div className="session-review-actions-trailing" aria-hidden="true" />
+                    <button
+                      type="button"
+                      className="session-icon-button"
+                      onClick={() => adjustBatchRenderBrushSize("smaller")}
+                      aria-label="Smaller X stroke"
+                    >
+                      <img src={smallerIcon} alt="" className="session-icon-image" />
+                    </button>
+                    <button
+                      type="button"
+                      className="session-icon-button"
+                      onClick={() => adjustBatchRenderBrushSize("bigger")}
+                      aria-label="Bigger X stroke"
+                    >
+                      <img src={biggerIcon} alt="" className="session-icon-image" />
+                    </button>
                   </div>
                 </div>
               ) : (
@@ -1978,6 +2052,107 @@ async function rasterizeDataUrlToPngBlob(dataUrl: string, size: number): Promise
   return blob;
 }
 
+function sanitizeVectorSvgDataUrl(dataUrl: string): string {
+  if (!dataUrl.startsWith("data:image/svg+xml")) {
+    return dataUrl;
+  }
+
+  const commaIndex = dataUrl.indexOf(",");
+  if (commaIndex < 0) {
+    return dataUrl;
+  }
+
+  const metadata = dataUrl.slice(0, commaIndex);
+  const payload = dataUrl.slice(commaIndex + 1);
+  const whiteRectPattern = /<rect\b[^>]*fill=["']#(?:fff|ffffff)["'][^>]*\/?>/gi;
+
+  try {
+    if (metadata.includes(";base64")) {
+      const decoded = atob(payload);
+      const sanitized = decoded.replace(whiteRectPattern, "");
+      if (sanitized === decoded) {
+        return dataUrl;
+      }
+      return `${metadata},${btoa(sanitized)}`;
+    }
+
+    const decoded = decodeURIComponent(payload);
+    const sanitized = decoded.replace(whiteRectPattern, "");
+    if (sanitized === decoded) {
+      return dataUrl;
+    }
+    return `${metadata},${encodeURIComponent(sanitized)}`;
+  } catch {
+    return dataUrl;
+  }
+}
+
+function parseVectorSvgDataUrl(dataUrl: string): VectorTrace | null {
+  const svg = decodeSvgDataUrl(dataUrl);
+  if (!svg) {
+    return null;
+  }
+
+  const viewBoxMatch = svg.match(/viewBox=["'][^"']*\s([\d.]+)\s([\d.]+)["']/i);
+  const widthMatch = svg.match(/width=["']([\d.]+)["']/i);
+  const heightMatch = svg.match(/height=["']([\d.]+)["']/i);
+  const size = Math.max(
+    Number.parseFloat(viewBoxMatch?.[1] ?? "0"),
+    Number.parseFloat(viewBoxMatch?.[2] ?? "0"),
+    Number.parseFloat(widthMatch?.[1] ?? "0"),
+    Number.parseFloat(heightMatch?.[1] ?? "0"),
+    1,
+  );
+
+  const paths = Array.from(svg.matchAll(/<path\b[^>]*\bd=["']([^"']+)["'][^>]*>/gi))
+    .map((match) => parseVectorPathData(match[1] ?? ""))
+    .filter((path) => path.length > 0);
+
+  if (paths.length === 0) {
+    return null;
+  }
+
+  return { size, paths };
+}
+
+function decodeSvgDataUrl(dataUrl: string): string | null {
+  if (!dataUrl.startsWith("data:image/svg+xml")) {
+    return null;
+  }
+
+  const commaIndex = dataUrl.indexOf(",");
+  if (commaIndex < 0) {
+    return null;
+  }
+
+  const metadata = dataUrl.slice(0, commaIndex);
+  const payload = dataUrl.slice(commaIndex + 1);
+
+  try {
+    if (metadata.includes(";base64")) {
+      return atob(payload);
+    }
+    return decodeURIComponent(payload);
+  } catch {
+    return null;
+  }
+}
+
+function parseVectorPathData(pathData: string): VectorPathPoint[] {
+  const points: VectorPathPoint[] = [];
+  const commandPattern = /[ML]\s*(-?[\d.]+)\s*,?\s*(-?[\d.]+)/gi;
+
+  for (const match of pathData.matchAll(commandPattern)) {
+    const x = Number.parseFloat(match[1] ?? "");
+    const y = Number.parseFloat(match[2] ?? "");
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      points.push({ x, y });
+    }
+  }
+
+  return points;
+}
+
 function buildDrawingSignature(drawing: DrawingVectorData): string {
   return JSON.stringify(
     drawing.strokes.map((stroke) => ({
@@ -2175,7 +2350,7 @@ function buildVectorSvgDataUrl(trace: VectorTrace): string {
     .join("");
 
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${trace.size}" height="${trace.size}" viewBox="0 0 ${trace.size} ${trace.size}"><rect width="${trace.size}" height="${trace.size}" fill="#ffffff" />${paths}</svg>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${trace.size}" height="${trace.size}" viewBox="0 0 ${trace.size} ${trace.size}">${paths}</svg>`,
   )}`;
 }
 

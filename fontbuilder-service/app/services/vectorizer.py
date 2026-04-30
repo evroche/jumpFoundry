@@ -259,7 +259,6 @@ def _vector_svg_data_url(polylines: list[list[Point]], size: int) -> str:
 
     svg = (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 {size} {size}">'
-        f'<rect width="{size}" height="{size}" fill="#ffffff" />'
         f'{"".join(paths)}'
         "</svg>"
     )
