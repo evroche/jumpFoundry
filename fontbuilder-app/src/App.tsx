@@ -19,6 +19,7 @@ import {
   normalizeGlyphSet,
   submitSkeletonPreview,
   submitGlyphGeneration,
+  submitGlyphVectorization,
   submitManyGlyphs,
   updateSession,
   type AdditionalReferenceInput,
@@ -71,6 +72,7 @@ export default function App() {
   const [selectedBatchLetters, setSelectedBatchLetters] = useState<string[]>([]);
   const [pendingBatchLetters, setPendingBatchLetters] = useState<string[]>([]);
   const [normalizedExportGlyphs, setNormalizedExportGlyphs] = useState<GlyphOutlineExportItem[]>([]);
+  const [seedFinalRenderImages, setSeedFinalRenderImages] = useState<Record<string, string>>({});
   const [brushSize, setBrushSize] = useState(16);
   const [drawStageTab, setDrawStageTab] = useState<"draw" | "vector" | "skeleton">("draw");
   const [reviewTab, setReviewTab] = useState<"skeleton" | "vector" | "final">("skeleton");
@@ -200,7 +202,7 @@ export default function App() {
       return {
         key: `seed-final-${normalizedCharacter}`,
         character: normalizedCharacter,
-        imageUrl: seedReference.previewUrl,
+        imageUrl: seedFinalRenderImages[normalizedCharacter] || seedReference.previewUrl,
         alt: normalizedCharacter,
         isPending,
       };
@@ -377,6 +379,7 @@ export default function App() {
     setSelectedBatchLetters([]);
     setPendingBatchLetters([]);
     setNormalizedExportGlyphs([]);
+    setSeedFinalRenderImages({});
     setReferenceBlob(null);
     setDrawingData(null);
     setPreviewFontBlob(null);
@@ -823,6 +826,42 @@ export default function App() {
       isActive = false;
     };
   }, [result?.generated_image_data_url, drawingData?.brush_size, drawingData?.canvas_size, brushSize]);
+
+  useEffect(() => {
+    if (seedReferences.length === 0) {
+      setSeedFinalRenderImages({});
+      return;
+    }
+
+    let isActive = true;
+    void (async () => {
+      try {
+        const renderedEntries = await Promise.all(
+          seedReferences.map(async (reference) => {
+            const artifacts = await buildReviewArtifacts(
+              reference.previewUrl,
+              16,
+              SESSION_CANVAS_SIZE,
+            );
+            return [normalizeLetter(reference.character), artifacts.finalImageDataUrl] as const;
+          }),
+        );
+        if (!isActive) {
+          return;
+        }
+        setSeedFinalRenderImages(Object.fromEntries(renderedEntries));
+      } catch {
+        if (!isActive) {
+          return;
+        }
+        setSeedFinalRenderImages({});
+      }
+    })();
+
+    return () => {
+      isActive = false;
+    };
+  }, [seedReferences]);
 
   useEffect(() => {
     if (!sessionId || !result || !batchResult || seedReferences.length < 2) {
@@ -1968,11 +2007,23 @@ async function buildReviewArtifacts(
   brushSize: number,
   sourceCanvasSize: number,
 ): Promise<ReviewArtifacts> {
-  const trace = await traceVectorPathsFromDataUrl(dataUrl);
-  return {
-    vectorImageDataUrl: buildVectorSvgDataUrl(trace),
-    finalImageDataUrl: await renderBrushPreview(trace, brushSize, sourceCanvasSize),
-  };
+  try {
+    const artifacts = await submitGlyphVectorization(
+      dataUrlToBlob(dataUrl),
+      brushSize,
+    );
+    return {
+      vectorImageDataUrl: artifacts.interpreted_vector_data_url,
+      finalImageDataUrl: artifacts.final_render_data_url,
+    };
+  } catch (error) {
+    console.warn("[fontbuilder] vectorize-preview fallback", error);
+    const trace = await traceVectorPathsFromDataUrl(dataUrl);
+    return {
+      vectorImageDataUrl: buildVectorSvgDataUrl(trace),
+      finalImageDataUrl: await renderBrushPreview(trace, brushSize, sourceCanvasSize),
+    };
+  }
 }
 
 async function traceVectorPathsFromDataUrl(dataUrl: string): Promise<VectorTrace> {

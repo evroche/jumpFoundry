@@ -16,6 +16,7 @@ from app.schemas.glyph import (
     GlyphGenerationResponse,
     GlyphNormalizationResponse,
     GlyphOutlineExportRequest,
+    GlyphVectorizationResponse,
     SkeletonPreviewRequest,
     SkeletonPreviewResponse,
 )
@@ -25,6 +26,7 @@ from app.services.font_export import build_partial_ttf
 from app.services.outline_export import build_outline_svg_zip, normalize_glyph_images
 from app.services.orchestrator import GenerationOrchestrator
 from app.services.skeleton_renderer import render_skeleton_preview
+from app.services.vectorizer import vectorize_centerline_and_render
 
 router = APIRouter()
 orchestrator = GenerationOrchestrator()
@@ -200,6 +202,33 @@ async def create_skeleton_preview(payload: SkeletonPreviewRequest) -> SkeletonPr
         skeleton_image_data_url=skeleton_image_data_url,
         stroke_count=stroke_count,
         point_count=point_count,
+    )
+
+
+@router.post("/api/v1/vectorize-preview", response_model=GlyphVectorizationResponse)
+async def vectorize_preview(
+    glyph_image: UploadFile = File(...),
+    brush_size: int = Form(16),
+) -> GlyphVectorizationResponse:
+    image_bytes = await glyph_image.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="glyph_image must be non-empty")
+
+    try:
+        interpreted_vector_data_url, final_render_data_url = await run_in_threadpool(
+            vectorize_centerline_and_render,
+            image_bytes,
+            brush_size=brush_size,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return GlyphVectorizationResponse(
+        backend_version=get_backend_version(),
+        interpreted_vector_data_url=interpreted_vector_data_url,
+        final_render_data_url=final_render_data_url,
     )
 
 

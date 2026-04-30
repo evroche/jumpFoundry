@@ -58,6 +58,12 @@ class GlyphNormalizationResponse(BaseModel):
     glyphs: list[GlyphOutlineExportItem]
 
 
+class GlyphVectorizationResponse(BaseModel):
+    backend_version: str
+    interpreted_vector_data_url: str
+    final_render_data_url: str
+
+
 StructuralMode = Literal["stroke-path", "contour-outline"]
 
 

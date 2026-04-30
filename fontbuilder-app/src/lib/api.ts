@@ -95,6 +95,12 @@ export type GlyphNormalizationResponse = {
   glyphs: GlyphOutlineExportItem[];
 };
 
+export type GlyphVectorizationResponse = {
+  backend_version: string;
+  interpreted_vector_data_url: string;
+  final_render_data_url: string;
+};
+
 export type AdditionalReferenceInput = {
   blob: Blob;
   character: string;
@@ -241,6 +247,34 @@ export async function submitSkeletonPreview(payload: {
   console.log("[fontbuilder] skeleton-preview response", nextPayload);
   console.groupEnd();
   return nextPayload;
+}
+
+export async function submitGlyphVectorization(
+  blob: Blob,
+  brushSize: number,
+): Promise<GlyphVectorizationResponse> {
+  const formData = new FormData();
+  formData.append("glyph_image", blob, "glyph_image.png");
+  formData.append("brush_size", String(brushSize));
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/vectorize-preview`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    let message = "Failed to vectorize glyph preview";
+    try {
+      const payload = await response.json();
+      message = payload.detail ?? message;
+    } catch {
+      const text = await response.text();
+      message = text || message;
+    }
+    throw new Error(message);
+  }
+
+  return response.json();
 }
 
 export async function requestSessionApprove(sessionId: string): Promise<SessionResponse> {
