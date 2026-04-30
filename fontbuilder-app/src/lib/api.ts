@@ -38,6 +38,8 @@ export type SessionResponse = {
   current_drawing_image_data_url: string;
   seed_references: GlyphOutlineExportItem[];
   batch_run_ids: string[];
+  pending_revision_characters: string[];
+  active_revision_job_id: string;
   normalized_glyphs: GlyphOutlineExportItem[];
   font_file_data_url: string;
 };
@@ -264,6 +266,8 @@ export async function updateSession(
     current_drawing_image_data_url?: string;
     seed_references?: GlyphOutlineExportItem[];
     batch_run_ids?: string[];
+    pending_revision_characters?: string[];
+    active_revision_job_id?: string;
     normalized_glyphs?: GlyphOutlineExportItem[];
     font_file_data_url?: string;
   },

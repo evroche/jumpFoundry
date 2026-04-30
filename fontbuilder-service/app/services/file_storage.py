@@ -56,6 +56,8 @@ class RunStorage:
                 "target_character": target_character,
                 "skeleton_image_data_url": "",
                 "selected_revision_characters": [],
+                "pending_revision_characters": [],
+                "active_revision_job_id": "",
             },
         )
 
@@ -89,6 +91,8 @@ class RunStorage:
                 "status": "awaiting_hermes_edit_prompt",
                 "instruction": instruction,
                 "selected_revision_characters": selected,
+                "pending_revision_characters": [],
+                "active_revision_job_id": "",
             },
         )
 
@@ -110,6 +114,8 @@ class RunStorage:
             "current_drawing_image_data_url": "",
             "seed_references": [],
             "batch_run_ids": [],
+            "pending_revision_characters": [],
+            "active_revision_job_id": "",
             "normalized_glyphs": [],
             "font_file_data_url": "",
             "created_at": datetime.now(UTC).isoformat(),

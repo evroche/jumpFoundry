@@ -88,7 +88,6 @@ export default function App() {
   const syncedSessionAssetsRef = useRef("");
   const hydratedRunIdRef = useRef("");
   const hydratingRunIdRef = useRef("");
-  const batchRevisionStatusRef = useRef("");
   const isAwaitingEditPrompt = session?.status === "awaiting_hermes_edit_prompt";
   const isAwaitingFontName = session?.status === "awaiting_font_name";
   const isSessionWorking = Boolean(session && isWorkingSessionStatus(session.status));
@@ -116,9 +115,7 @@ export default function App() {
   const isHydratingReviewRun = Boolean(
     sessionId &&
     session?.stage === "review" &&
-    session?.status === "ready" &&
     session?.latest_run_id &&
-    !batchResult &&
     !result,
   );
 
@@ -142,7 +139,9 @@ export default function App() {
   const skeletonPreviewImage = skeletonPreview?.skeleton_image_data_url || session?.skeleton_image_data_url || "";
   const strokeCount = drawingData?.strokes.length ?? 0;
   const pointCount = drawingData?.strokes.reduce((count, stroke) => count + stroke.points.length, 0) ?? 0;
-  const batchItems = batchResult && result ? [result, ...batchResult.items] : [];
+  const batchItems = batchResult
+    ? (result ? [result, ...batchResult.items] : batchResult.items)
+    : [];
   const normalizedGlyphMap = new Map(
     normalizedExportGlyphs.map((glyph) => [normalizeLetter(glyph.character), glyph.image_data_url]),
   );
@@ -369,8 +368,6 @@ export default function App() {
     setReviewTabsOpen(false);
     setErrorMessage("");
     setSessionError("");
-    batchRevisionStatusRef.current = "";
-
     let isActive = true;
     void fetchSession(sessionId)
       .then((nextSession) => {
@@ -414,16 +411,22 @@ export default function App() {
       return;
     }
 
-    const sessionSeedCharacters = JSON.stringify(
-      (session.seed_references ?? []).map((reference) => normalizeLetter(reference.character)),
+    const sessionSeedSignature = JSON.stringify(
+      (session.seed_references ?? []).map((reference) => ({
+        character: normalizeLetter(reference.character),
+        imageDataUrl: reference.image_data_url,
+      })),
     );
-    const localSeedCharacters = JSON.stringify(
-      seedReferences.map((reference) => normalizeLetter(reference.character)),
+    const localSeedSignature = JSON.stringify(
+      seedReferences.map((reference) => ({
+        character: normalizeLetter(reference.character),
+        imageDataUrl: reference.previewUrl,
+      })),
     );
 
     if (
       session.seed_references?.length &&
-      sessionSeedCharacters !== localSeedCharacters
+      sessionSeedSignature !== localSeedSignature
     ) {
       setSeedReferences(hydrateSeedReferences(session.seed_references));
     }
@@ -522,9 +525,7 @@ export default function App() {
       !sessionId ||
       !session ||
       session.stage !== "review" ||
-      session.status !== "ready" ||
-      !session.latest_run_id ||
-      batchResult
+      !session.latest_run_id
     ) {
       return;
     }
@@ -597,25 +598,22 @@ export default function App() {
   }, [session?.batch_run_ids, sessionBatchRunIdsSignature, hydratedBatchRunIdsSignature, session?.backend_version, session?.latest_run_id, session?.source_character, result?.target_character]);
 
   useEffect(() => {
-    const sessionStatus = session?.status ?? "";
-    const enteringBatchRevision = sessionStatus === "generating_batch" && batchRevisionStatusRef.current !== "generating_batch";
-    if (enteringBatchRevision) {
-      const pendingLetters = (session?.selected_revision_characters ?? []).map(normalizeLetter);
-      setPendingBatchLetters(pendingLetters);
-      if (pendingLetters.length > 0) {
-        setSelectedBatchLetters((current) =>
-          current.filter((character) => !pendingLetters.includes(normalizeLetter(character))),
-        );
-      }
+    const nextPendingLetters = (
+      session?.pending_revision_characters?.length
+        ? session.pending_revision_characters
+        : session?.status === "generating_batch"
+          ? (session.selected_revision_characters ?? [])
+          : []
+    ).map(normalizeLetter);
+    setPendingBatchLetters((current) => (
+      JSON.stringify(current) === JSON.stringify(nextPendingLetters) ? current : nextPendingLetters
+    ));
+    if (nextPendingLetters.length > 0) {
+      setSelectedBatchLetters((current) =>
+        current.filter((character) => !nextPendingLetters.includes(normalizeLetter(character))),
+      );
     }
-
-    const batchRevisionHydrated = sessionStatus !== "generating_batch" && sessionBatchRunIdsSignature === hydratedBatchRunIdsSignature;
-    if (pendingBatchLetters.length > 0 && batchRevisionHydrated) {
-      setPendingBatchLetters([]);
-    }
-
-    batchRevisionStatusRef.current = sessionStatus;
-  }, [session?.status, session?.selected_revision_characters, sessionBatchRunIdsSignature, hydratedBatchRunIdsSignature, pendingBatchLetters.length]);
+  }, [session?.pending_revision_characters]);
 
   useEffect(() => {
     if (!session?.font_file_data_url || postBatchStage === "preview") {
@@ -732,19 +730,27 @@ export default function App() {
       return;
     }
 
+    const applySessionUpdate = (nextSession: SessionResponse) => {
+      setSession((current) => {
+        if (!current) {
+          return nextSession;
+        }
+        if (JSON.stringify(current) === JSON.stringify(nextSession)) {
+          return current;
+        }
+        return nextSession;
+      });
+    };
+
     void fetchSession(sessionId)
-      .then((nextSession) => {
-        setSession(nextSession);
-      })
+      .then(applySessionUpdate)
       .catch(() => {
         // Ignore transient polling errors while the local backend restarts.
       });
 
     const interval = window.setInterval(() => {
       void fetchSession(sessionId)
-        .then((nextSession) => {
-          setSession(nextSession);
-        })
+        .then(applySessionUpdate)
         .catch(() => {
           // Ignore transient polling errors while the local backend restarts.
         });
@@ -753,7 +759,7 @@ export default function App() {
     return () => {
       window.clearInterval(interval);
     };
-  }, [sessionId, session, result, batchResult, isSubmitting]);
+  }, [sessionId, isSubmitting, session?.status]);
 
   useEffect(() => {
     if (!drawingData) {
@@ -1084,6 +1090,7 @@ export default function App() {
           target_character: nextAlphabetCharacter(firstSeedCharacter),
           instruction: 'I recorded your first letter. Now draw the letter "S".\n\nLet me know when you\'re done and I\'ll generate the first sample character for you to review.',
           skeleton_image_data_url: "",
+          current_drawing_image_data_url: "",
           status: "ready",
           stage: "draw",
           selected_revision_characters: [],
@@ -1170,8 +1177,10 @@ export default function App() {
               instruction: `I generated "${effectiveTargetCharacter}". Approve it if it looks right, or message me back to request changes.`,
               selected_revision_characters: [],
               batch_run_ids: [],
+              pending_revision_characters: [],
               normalized_glyphs: [],
               font_file_data_url: "",
+              current_drawing_image_data_url: "",
             }
           : current
       ));
@@ -1290,6 +1299,8 @@ export default function App() {
         instruction: "I generated the next set of letters. If you'd like changes, select the letters you'd like to revise and let me know when you're ready.",
         selected_revision_characters: [],
         batch_run_ids: items.map((item) => item.run_id),
+        pending_revision_characters: [],
+        current_drawing_image_data_url: "",
       });
       setBatchResult(nextBatch);
       setDebugHistory((current) => [

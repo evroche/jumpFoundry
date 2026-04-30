@@ -296,6 +296,7 @@ def get_fontsketch_session_status(args: dict, **kwargs) -> str:
             "source_character": payload.get("source_character", ""),
             "target_character": payload.get("target_character", ""),
             "selected_revision_characters": payload.get("selected_revision_characters", []),
+            "pending_revision_characters": payload.get("pending_revision_characters", []),
             "font_name": payload.get("font_name", ""),
             "updated_at": payload.get("_updated_at", ""),
         }
@@ -397,8 +398,10 @@ def generate_fontsketch_review_glyph(args: dict, **kwargs) -> str:
                 },
             ],
             "batch_run_ids": [],
+            "pending_revision_characters": [],
             "normalized_glyphs": [],
             "font_file_data_url": "",
+            "current_drawing_image_data_url": "",
         },
     )
     next_session = json.loads(get_fontsketch_session_status({"session_id": session_id}))
@@ -437,47 +440,36 @@ def generate_fontsketch_alphabet_batch(args: dict, **kwargs) -> str:
             "status": "generating_batch",
             "instruction": "I am now generating the rest of the alphabet.",
             "selected_revision_characters": [],
+            "pending_revision_characters": [],
         },
     )
-
-    boundary = "----FontsketchGlyphBatch"
-    body_parts: list[bytes] = []
-
-    def add_field(name: str, value: str) -> None:
-        body_parts.extend([
-            f"--{boundary}\r\n".encode("utf-8"),
-            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"),
-            value.encode("utf-8"),
-            b"\r\n",
-        ])
-
-    def add_file(name: str, filename: str, content_type: str, content: bytes) -> None:
-        body_parts.extend([
-            f"--{boundary}\r\n".encode("utf-8"),
-            f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'.encode("utf-8"),
-            f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"),
-            content,
-            b"\r\n",
-        ])
-
-    add_file("reference_glyph", "reference_glyph.png", "image/png", _data_url_to_bytes(primary_seed.get("image_data_url", "")))
-    add_field("source_character", _normalize_letter(primary_seed.get("character", "E")))
-    add_field("target_characters", ",".join(next_targets))
-    add_field("accepted_run_id", latest_run_id)
-    add_field("correction", "")
-    request = urllib.request.Request(
-        f"{BACKEND_BASE_URL}/api/v1/generate-many",
-        data=b"".join(body_parts + [f"--{boundary}--\r\n".encode("utf-8")]),
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(request, timeout=300) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        items = [
+            _multipart_generate_request(
+                session_id="",
+                primary_seed=primary_seed,
+                secondary_seed=secondary_seed,
+                source_character=_normalize_letter(primary_seed.get("character", "E")),
+                target_character=target_character,
+                correction="",
+                previous_run_id=latest_run_id,
+                brush_size=16,
+            )
+            for target_character in next_targets
+        ]
     except urllib.error.URLError as exc:
+        _patch_session(
+            session_id,
+            {
+                "status": "ready",
+                "stage": "review",
+                "instruction": "I couldn't generate the alphabet just now. Please try again in a moment.",
+                "selected_revision_characters": [],
+                "pending_revision_characters": [],
+            },
+        )
         return json.dumps({"error": f"Failed to generate Fontsketch alphabet batch: {exc}"})
 
-    items = payload.get("items", [])
     batch_run_ids = [item.get("run_id", "") for item in items if item.get("run_id")]
     updated_session = _patch_session(
         session_id,
@@ -487,10 +479,15 @@ def generate_fontsketch_alphabet_batch(args: dict, **kwargs) -> str:
             "instruction": "Here is the full set of characters for your typeface. If you'd like to request changes, select the letters you'd like to revise and let me know when you're ready. If everything looks good, tell me \"continue\" and I'll move on.",
             "source_character": approved_character,
             "target_character": next_targets[0] if next_targets else _next_alphabet_character(approved_character),
+            "latest_run_id": latest_run_id,
+            "correction": "",
+            "seed_references": seed_references,
             "batch_run_ids": batch_run_ids,
             "selected_revision_characters": [],
+            "pending_revision_characters": [],
             "normalized_glyphs": [],
             "font_file_data_url": "",
+            "current_drawing_image_data_url": "",
         },
     )
     return json.dumps(
@@ -606,6 +603,18 @@ def submit_fontsketch_revision(args: dict, **kwargs) -> str:
         return json.dumps(session_payload)
 
     session_id = session_payload["session_id"]
+    if (session_payload.get("pending_revision_characters") or []) or session_payload.get("status") == "generating_batch":
+        pending_label = ", ".join(session_payload.get("pending_revision_characters") or [])
+        return json.dumps(
+            {
+                "error": (
+                    f"I am still finishing the current revision pass for {pending_label}."
+                    if pending_label
+                    else "I am still finishing the current revision pass."
+                )
+            }
+        )
+
     target_letters = session_payload.get("selected_revision_characters", []) or [session_payload.get("target_character", "")]
     seed_references = session_payload.get("seed_references", []) or []
     if len(seed_references) < 2:
@@ -614,80 +623,44 @@ def submit_fontsketch_revision(args: dict, **kwargs) -> str:
     normalized_targets = [_normalize_letter(letter, "") for letter in target_letters if letter]
     target_label = ", ".join(normalized_targets) or _normalize_letter(session_payload.get("target_character", "F"), "F")
     is_batch_revision = bool(session_payload.get("selected_revision_characters"))
-    working_status = "generating_batch" if is_batch_revision else "generating_single"
-    try:
-        _patch_session(
-            session_id,
-            {
-                "status": working_status,
-                "correction": correction,
-                "instruction": f"I am applying that change to {target_label} now.",
-            },
-        )
-    except urllib.error.URLError as exc:
-        return json.dumps({"error": f"Failed to update Fontsketch session: {exc}"})
+    if not is_batch_revision:
+        try:
+            _patch_session(
+                session_id,
+                {
+                    "status": "generating_single",
+                    "correction": correction,
+                    "instruction": f"I am applying that change to {target_label} now.",
+                },
+            )
+        except urllib.error.URLError as exc:
+            return json.dumps({"error": f"Failed to update Fontsketch session: {exc}"})
 
     primary_seed = seed_references[0]
     secondary_seed = seed_references[1]
     source_character = _normalize_letter(primary_seed.get("character", session_payload.get("source_character", "E")))
     latest_run_id = (session_payload.get("latest_run_id") or "").strip()
-    batch_run_ids = session_payload.get("batch_run_ids", []) or []
 
     try:
         if is_batch_revision:
-            revised_runs: list[dict] = []
-            existing_runs_by_character: dict[str, str] = {}
-            if latest_run_id:
-                latest_run = _load_run(latest_run_id)
-                existing_runs_by_character[_normalize_letter(latest_run.get("target_character", ""), "")] = latest_run_id
-            for run_id in batch_run_ids:
-                run = _load_run(run_id)
-                existing_runs_by_character[_normalize_letter(run.get("target_character", ""), "")] = run_id
-
-            for character in [_normalize_letter(letter, "") for letter in target_letters if letter]:
-                revised_runs.append(
-                    _multipart_generate_request(
-                        session_id=session_id,
-                        primary_seed=primary_seed,
-                        secondary_seed=secondary_seed,
-                        source_character=source_character,
-                        target_character=character,
-                        correction=correction,
-                        previous_run_id=existing_runs_by_character.get(character, ""),
-                        brush_size=16,
-                    )
-                )
-
-            revised_by_character = {
-                _normalize_letter(run.get("target_character", ""), ""): run.get("run_id", "")
-                for run in revised_runs
-                if run.get("run_id")
-            }
-            next_batch_run_ids: list[str] = []
-            latest_character = ""
-            if latest_run_id:
-                latest_run = _load_run(latest_run_id)
-                latest_character = _normalize_letter(latest_run.get("target_character", ""), "")
-            if latest_character and revised_by_character.get(latest_character):
-                latest_run_id = revised_by_character[latest_character]
-            for run_id in batch_run_ids:
-                run = _load_run(run_id)
-                character = _normalize_letter(run.get("target_character", ""), "")
-                next_batch_run_ids.append(revised_by_character.get(character, run_id))
-
-            final_session = _patch_session(
-                session_id,
-                {
-                    "status": "ready",
-                    "stage": "review",
-                    "latest_run_id": latest_run_id,
-                    "batch_run_ids": next_batch_run_ids,
-                    "selected_revision_characters": [],
-                    "instruction": (
-                        f"I've generated a revision for {target_label}. Let me know if it looks good or if you'd like another revision.\n\n"
-                        "If it looks good, I will go ahead and generate the full set of characters."
-                    ),
+            payload = _json_request(
+                f"{BACKEND_BASE_URL}/api/v1/sessions/{session_id}/revision-batch",
+                method="POST",
+                payload={
+                    "correction": correction,
+                    "target_characters": normalized_targets,
                 },
+                timeout=10.0,
+            )
+            return json.dumps(
+                {
+                    "session_id": session_id,
+                    "status": payload.get("status", "generating_batch"),
+                    "instruction": payload.get("instruction", ""),
+                    "correction": correction,
+                    "target_characters": payload.get("target_characters", normalized_targets),
+                    "job_id": payload.get("job_id", ""),
+                }
             )
         else:
             target_character = _normalize_letter(session_payload.get("target_character", "F"), "F")

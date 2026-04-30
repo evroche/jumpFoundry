@@ -121,6 +121,8 @@ class FontSessionResponse(BaseModel):
     current_drawing_image_data_url: str = ""
     seed_references: list[SessionSeedReference] = []
     batch_run_ids: list[str] = []
+    pending_revision_characters: list[str] = []
+    active_revision_job_id: str = ""
     normalized_glyphs: list[GlyphOutlineExportItem] = []
     font_file_data_url: str = ""
 
@@ -140,9 +142,25 @@ class FontSessionUpdateRequest(BaseModel):
     current_drawing_image_data_url: str | None = None
     seed_references: list[SessionSeedReference] | None = None
     batch_run_ids: list[str] | None = None
+    pending_revision_characters: list[str] | None = None
+    active_revision_job_id: str | None = None
     normalized_glyphs: list[GlyphOutlineExportItem] | None = None
     font_file_data_url: str | None = None
 
 
 class FontSessionEditRequest(BaseModel):
     selected_revision_characters: list[str] = []
+
+
+class AsyncRevisionBatchRequest(BaseModel):
+    correction: str
+    target_characters: list[str] = []
+
+
+class AsyncRevisionBatchResponse(BaseModel):
+    backend_version: str
+    session_id: str
+    job_id: str
+    status: str = "generating_batch"
+    instruction: str = ""
+    target_characters: list[str] = []

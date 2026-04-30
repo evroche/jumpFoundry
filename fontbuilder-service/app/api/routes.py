@@ -6,6 +6,8 @@ from fastapi.responses import StreamingResponse
 
 from app.core.config import get_backend_version
 from app.schemas.glyph import (
+    AsyncRevisionBatchRequest,
+    AsyncRevisionBatchResponse,
     FontSessionEditRequest,
     FontSessionCreateRequest,
     FontSessionResponse,
@@ -17,6 +19,7 @@ from app.schemas.glyph import (
     SkeletonPreviewRequest,
     SkeletonPreviewResponse,
 )
+from app.services.async_revision_jobs import AsyncRevisionJobService
 from app.services.file_storage import RunStorage
 from app.services.font_export import build_partial_ttf
 from app.services.outline_export import build_outline_svg_zip, normalize_glyph_images
@@ -26,12 +29,39 @@ from app.services.skeleton_renderer import render_skeleton_preview
 router = APIRouter()
 orchestrator = GenerationOrchestrator()
 storage = RunStorage()
+revision_jobs = AsyncRevisionJobService(storage=storage, orchestrator=orchestrator)
 
 
 def _set_no_store(response: Response) -> None:
     response.headers["Cache-Control"] = "no-store, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
+
+
+def _build_session_response(session_id: str, session: dict, frontend_url: str | None = None) -> FontSessionResponse:
+    return FontSessionResponse(
+        session_id=session_id,
+        backend_version=get_backend_version(),
+        frontend_url=frontend_url or f"http://127.0.0.1:5174/session/{session_id}",
+        status=session.get("status", "ready"),
+        stage=session.get("stage", "draw"),
+        instruction=session.get("instruction", ""),
+        source_character=session.get("source_character", "A"),
+        target_character=session.get("target_character", "B"),
+        correction=session.get("correction", ""),
+        latest_run_id=session.get("latest_run_id", ""),
+        skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
+        structural_mode=session.get("structural_mode", "stroke-path"),
+        selected_revision_characters=session.get("selected_revision_characters", []),
+        font_name=session.get("font_name", ""),
+        current_drawing_image_data_url=session.get("current_drawing_image_data_url", ""),
+        seed_references=session.get("seed_references", []),
+        batch_run_ids=session.get("batch_run_ids", []),
+        pending_revision_characters=session.get("pending_revision_characters", []),
+        active_revision_job_id=session.get("active_revision_job_id", ""),
+        normalized_glyphs=session.get("normalized_glyphs", []),
+        font_file_data_url=session.get("font_file_data_url", ""),
+    )
 
 
 @router.get("/healthz")
@@ -45,27 +75,7 @@ async def create_session(payload: FontSessionCreateRequest, response: Response) 
     session_id = storage.create_session()
     session = storage.read_session(session_id) or {}
     frontend_base_url = payload.frontend_base_url.rstrip("/")
-    return FontSessionResponse(
-        session_id=session_id,
-        backend_version=get_backend_version(),
-        frontend_url=f"{frontend_base_url}/session/{session_id}",
-        status=session.get("status", "ready"),
-        stage=session.get("stage", "draw"),
-        instruction=session.get("instruction", ""),
-        source_character=session.get("source_character", "A"),
-        target_character=session.get("target_character", "B"),
-        correction=session.get("correction", ""),
-        latest_run_id=session.get("latest_run_id", ""),
-        skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
-        structural_mode=session.get("structural_mode", "stroke-path"),
-        selected_revision_characters=session.get("selected_revision_characters", []),
-        font_name=session.get("font_name", ""),
-        current_drawing_image_data_url=session.get("current_drawing_image_data_url", ""),
-        seed_references=session.get("seed_references", []),
-        batch_run_ids=session.get("batch_run_ids", []),
-        normalized_glyphs=session.get("normalized_glyphs", []),
-        font_file_data_url=session.get("font_file_data_url", ""),
-    )
+    return _build_session_response(session_id, session, f"{frontend_base_url}/session/{session_id}")
 
 
 @router.get("/api/v1/sessions/{session_id}", response_model=FontSessionResponse)
@@ -74,27 +84,7 @@ async def get_session(session_id: str, response: Response) -> FontSessionRespons
     session = storage.read_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    return FontSessionResponse(
-        session_id=session_id,
-        backend_version=get_backend_version(),
-        frontend_url=f"http://127.0.0.1:5174/session/{session_id}",
-        status=session.get("status", "ready"),
-        stage=session.get("stage", "draw"),
-        instruction=session.get("instruction", ""),
-        source_character=session.get("source_character", "A"),
-        target_character=session.get("target_character", "B"),
-        correction=session.get("correction", ""),
-        latest_run_id=session.get("latest_run_id", ""),
-        skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
-        structural_mode=session.get("structural_mode", "stroke-path"),
-        selected_revision_characters=session.get("selected_revision_characters", []),
-        font_name=session.get("font_name", ""),
-        current_drawing_image_data_url=session.get("current_drawing_image_data_url", ""),
-        seed_references=session.get("seed_references", []),
-        batch_run_ids=session.get("batch_run_ids", []),
-        normalized_glyphs=session.get("normalized_glyphs", []),
-        font_file_data_url=session.get("font_file_data_url", ""),
-    )
+    return _build_session_response(session_id, session)
 
 
 @router.patch("/api/v1/sessions/{session_id}", response_model=FontSessionResponse)
@@ -103,27 +93,7 @@ async def update_session(session_id: str, payload: FontSessionUpdateRequest, res
     session = storage.update_session(session_id, payload.model_dump())
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    return FontSessionResponse(
-        session_id=session_id,
-        backend_version=get_backend_version(),
-        frontend_url=f"http://127.0.0.1:5174/session/{session_id}",
-        status=session.get("status", "ready"),
-        stage=session.get("stage", "draw"),
-        instruction=session.get("instruction", ""),
-        source_character=session.get("source_character", "A"),
-        target_character=session.get("target_character", "B"),
-        correction=session.get("correction", ""),
-        latest_run_id=session.get("latest_run_id", ""),
-        skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
-        structural_mode=session.get("structural_mode", "stroke-path"),
-        selected_revision_characters=session.get("selected_revision_characters", []),
-        font_name=session.get("font_name", ""),
-        current_drawing_image_data_url=session.get("current_drawing_image_data_url", ""),
-        seed_references=session.get("seed_references", []),
-        batch_run_ids=session.get("batch_run_ids", []),
-        normalized_glyphs=session.get("normalized_glyphs", []),
-        font_file_data_url=session.get("font_file_data_url", ""),
-    )
+    return _build_session_response(session_id, session)
 
 
 @router.post("/api/v1/sessions/{session_id}/approve", response_model=FontSessionResponse)
@@ -132,27 +102,7 @@ async def approve_session(session_id: str, response: Response) -> FontSessionRes
     session = storage.approve_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    return FontSessionResponse(
-        session_id=session_id,
-        backend_version=get_backend_version(),
-        frontend_url=f"http://127.0.0.1:5174/session/{session_id}",
-        status=session.get("status", "ready"),
-        stage=session.get("stage", "draw"),
-        instruction=session.get("instruction", ""),
-        source_character=session.get("source_character", "A"),
-        target_character=session.get("target_character", "B"),
-        correction=session.get("correction", ""),
-        latest_run_id=session.get("latest_run_id", ""),
-        skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
-        structural_mode=session.get("structural_mode", "stroke-path"),
-        selected_revision_characters=session.get("selected_revision_characters", []),
-        font_name=session.get("font_name", ""),
-        current_drawing_image_data_url=session.get("current_drawing_image_data_url", ""),
-        seed_references=session.get("seed_references", []),
-        batch_run_ids=session.get("batch_run_ids", []),
-        normalized_glyphs=session.get("normalized_glyphs", []),
-        font_file_data_url=session.get("font_file_data_url", ""),
-    )
+    return _build_session_response(session_id, session)
 
 
 @router.post("/api/v1/sessions/{session_id}/edit-request", response_model=FontSessionResponse)
@@ -161,26 +111,85 @@ async def request_session_edit(session_id: str, payload: FontSessionEditRequest,
     session = storage.request_session_edit(session_id, payload.selected_revision_characters)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    return FontSessionResponse(
-        session_id=session_id,
+    return _build_session_response(session_id, session)
+
+
+@router.post("/api/v1/sessions/{session_id}/revision-batch", response_model=AsyncRevisionBatchResponse)
+async def create_async_revision_batch(
+    session_id: str,
+    payload: AsyncRevisionBatchRequest,
+    response: Response,
+) -> AsyncRevisionBatchResponse:
+    _set_no_store(response)
+    correction = payload.correction.strip()
+    if not correction:
+        raise HTTPException(status_code=400, detail="correction must be non-empty")
+
+    session = storage.read_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if len(session.get("seed_references", []) or []) < 2:
+        raise HTTPException(status_code=400, detail="Both seed letters are required before revisions can start")
+
+    target_characters = []
+    for character in payload.target_characters:
+        normalized = (character[:1] or "").upper()
+        if normalized.isalpha() and normalized not in target_characters:
+            target_characters.append(normalized)
+    if not target_characters:
+        raise HTTPException(status_code=400, detail="target_characters must contain at least one letter")
+
+    if revision_jobs.has_active_job(session_id) or (session.get("pending_revision_characters") or []):
+        raise HTTPException(status_code=409, detail="A revision batch is already in progress for this session")
+
+    instruction = (
+        f'I am applying that change to {", ".join(target_characters)} now. '
+        "The updated letters will appear on the board as each one finishes."
+    )
+    updated_session = storage.update_session(
+        session_id,
+        {
+            "status": "generating_batch",
+            "stage": "review",
+            "correction": correction,
+            "instruction": instruction,
+            "selected_revision_characters": target_characters,
+            "pending_revision_characters": target_characters,
+            "active_revision_job_id": "",
+            "normalized_glyphs": [],
+            "font_file_data_url": "",
+        },
+    )
+    if updated_session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        job_id = revision_jobs.submit_revision_batch(
+            session_id=session_id,
+            correction=correction,
+            target_characters=target_characters,
+        )
+    except ValueError as exc:
+        storage.update_session(
+            session_id,
+            {
+                "status": "ready",
+                "instruction": "I couldn't start that revision batch. Please try again.",
+                "selected_revision_characters": [],
+                "pending_revision_characters": [],
+                "active_revision_job_id": "",
+            },
+        )
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    storage.update_session(session_id, {"active_revision_job_id": job_id})
+    return AsyncRevisionBatchResponse(
         backend_version=get_backend_version(),
-        frontend_url=f"http://127.0.0.1:5174/session/{session_id}",
-        status=session.get("status", "ready"),
-        stage=session.get("stage", "draw"),
-        instruction=session.get("instruction", ""),
-        source_character=session.get("source_character", "A"),
-        target_character=session.get("target_character", "B"),
-        correction=session.get("correction", ""),
-        latest_run_id=session.get("latest_run_id", ""),
-        skeleton_image_data_url=session.get("skeleton_image_data_url", ""),
-        structural_mode=session.get("structural_mode", "stroke-path"),
-        selected_revision_characters=session.get("selected_revision_characters", []),
-        font_name=session.get("font_name", ""),
-        current_drawing_image_data_url=session.get("current_drawing_image_data_url", ""),
-        seed_references=session.get("seed_references", []),
-        batch_run_ids=session.get("batch_run_ids", []),
-        normalized_glyphs=session.get("normalized_glyphs", []),
-        font_file_data_url=session.get("font_file_data_url", ""),
+        session_id=session_id,
+        job_id=job_id,
+        status="generating_batch",
+        instruction=instruction,
+        target_characters=target_characters,
     )
 
 
