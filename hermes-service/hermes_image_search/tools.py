@@ -204,6 +204,44 @@ def _multipart_generate_request(
         return json.loads(response.read().decode("utf-8"))
 
 
+def _multipart_generate_request_with_retry(
+    *,
+    session_id: str,
+    primary_seed: dict,
+    secondary_seed: dict | None,
+    source_character: str,
+    target_character: str,
+    correction: str,
+    previous_run_id: str,
+    brush_size: int = 16,
+    attempts: int = 3,
+) -> dict:
+    last_error: urllib.error.URLError | None = None
+    for attempt in range(attempts):
+        try:
+            return _multipart_generate_request(
+                session_id=session_id,
+                primary_seed=primary_seed,
+                secondary_seed=secondary_seed,
+                source_character=source_character,
+                target_character=target_character,
+                correction=correction,
+                previous_run_id=previous_run_id,
+                brush_size=brush_size,
+            )
+        except urllib.error.URLError as exc:
+            last_error = exc
+            status_code = getattr(exc, "code", None)
+            is_retriable = status_code is None or status_code >= 500
+            if attempt >= attempts - 1 or not is_retriable:
+                raise
+            time.sleep(0.8 * (attempt + 1))
+
+    if last_error is not None:
+        raise last_error
+    raise urllib.error.URLError("Unknown glyph generation failure")
+
+
 def start_fontsketch_session(args: dict, **kwargs) -> str:
     frontend_base_url = args.get("frontend_base_url", "http://127.0.0.1:5174").strip() or "http://127.0.0.1:5174"
     backend_base_url = args.get("backend_base_url", "http://127.0.0.1:8200").strip() or "http://127.0.0.1:8200"
@@ -445,7 +483,7 @@ def generate_fontsketch_alphabet_batch(args: dict, **kwargs) -> str:
     )
     try:
         items = [
-            _multipart_generate_request(
+            _multipart_generate_request_with_retry(
                 session_id="",
                 primary_seed=primary_seed,
                 secondary_seed=secondary_seed,

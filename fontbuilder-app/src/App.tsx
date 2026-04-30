@@ -74,6 +74,7 @@ export default function App() {
   const [brushSize, setBrushSize] = useState(16);
   const [drawStageTab, setDrawStageTab] = useState<"draw" | "vector" | "skeleton">("draw");
   const [reviewTab, setReviewTab] = useState<"skeleton" | "vector" | "final">("skeleton");
+  const [batchViewTab, setBatchViewTab] = useState<"art" | "final">("art");
   const [interpretedVectorImage, setInterpretedVectorImage] = useState("");
   const [finalRenderImage, setFinalRenderImage] = useState("");
   const [isPreparingReviewArtifacts, setIsPreparingReviewArtifacts] = useState(false);
@@ -175,6 +176,37 @@ export default function App() {
     }
     return {
       key: `empty-${normalizedCharacter}`,
+      character: normalizedCharacter,
+      imageUrl: "",
+      alt: normalizedCharacter,
+      isPending,
+    };
+  });
+  const batchFinalGridItems = ALPHABET.map((character) => {
+    const normalizedCharacter = normalizeLetter(character);
+    const isPending = pendingBatchLetters.includes(normalizedCharacter);
+    const seedReference = seedReferences.find((reference) => normalizeLetter(reference.character) === normalizedCharacter);
+    const generatedItem = batchItems.find((item) => normalizeLetter(item.target_character) === normalizedCharacter);
+    if (generatedItem) {
+      return {
+        key: `${generatedItem.run_id}-final`,
+        character: normalizedCharacter,
+        imageUrl: generatedItem.final_render_data_url || generatedItem.generated_image_data_url,
+        alt: `${normalizedCharacter} final render`,
+        isPending,
+      };
+    }
+    if (seedReference) {
+      return {
+        key: `seed-final-${normalizedCharacter}`,
+        character: normalizedCharacter,
+        imageUrl: seedReference.previewUrl,
+        alt: normalizedCharacter,
+        isPending,
+      };
+    }
+    return {
+      key: `empty-final-${normalizedCharacter}`,
       character: normalizedCharacter,
       imageUrl: "",
       alt: normalizedCharacter,
@@ -292,6 +324,36 @@ export default function App() {
         >
           V
         </button>
+        <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
+        <button
+          type="button"
+          className={`session-view-toggle-button${reviewTab === "final" ? " is-active" : ""}`}
+          onClick={() => setReviewTab("final")}
+        >
+          X
+        </button>
+      </div>
+    </div>
+  );
+
+  const batchViewTabs = (
+    <div className="session-frame-tabs-shell">
+      <div className="session-frame-tabs">
+        <button
+          type="button"
+          className={`session-view-toggle-button${batchViewTab === "art" ? " is-active" : ""}`}
+          onClick={() => setBatchViewTab("art")}
+        >
+          A
+        </button>
+        <span className="session-frame-tabs-separator" aria-hidden="true">/</span>
+        <button
+          type="button"
+          className={`session-view-toggle-button${batchViewTab === "final" ? " is-active" : ""}`}
+          onClick={() => setBatchViewTab("final")}
+        >
+          X
+        </button>
       </div>
     </div>
   );
@@ -321,6 +383,7 @@ export default function App() {
     setPreviewFontSizeOffset(0);
     setPostBatchStage("grid");
     setReviewTab("skeleton");
+    setBatchViewTab("art");
     setDrawStageTab("draw");
     setErrorMessage("");
     setSessionError("");
@@ -1194,6 +1257,7 @@ export default function App() {
         items,
       };
       setPostBatchStage("grid");
+      setBatchViewTab("art");
       setPreviewFontBlob(null);
       const nextSession = await updateSession(sessionId, {
         source_character: approvedCharacter,
@@ -1357,8 +1421,9 @@ export default function App() {
               {postBatchStage === "grid" ? (
                 <div className="session-stage-stack session-stage-stack-wide">
                   <section className="session-review-frame session-batch-frame">
+                    {batchViewTabs}
                     <div className="session-batch-grid">
-                      {batchGridItems.map((item) => (
+                      {(batchViewTab === "final" ? batchFinalGridItems : batchGridItems).map((item) => (
                         <div key={item.key} className="session-batch-cell">
                           <button
                             type="button"
@@ -2076,8 +2141,6 @@ async function renderBrushPreview(
     throw new Error("Failed to prepare final render canvas");
   }
 
-  context.fillStyle = "#ffffff";
-  context.fillRect(0, 0, trace.size, trace.size);
   context.strokeStyle = "#111111";
   context.lineCap = "round";
   context.lineJoin = "round";
@@ -2095,7 +2158,63 @@ async function renderBrushPreview(
     context.stroke();
   }
 
-  return canvas.toDataURL("image/png");
+  return cropCanvasToContentDataUrl(canvas, Math.max(8, Math.round(trace.size * 0.03)));
+}
+
+function cropCanvasToContentDataUrl(canvas: HTMLCanvasElement, padding: number): string {
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return canvas.toDataURL("image/png");
+  }
+
+  const { width, height } = canvas;
+  const { data } = context.getImageData(0, 0, width, height);
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const alpha = data[(y * width + x) * 4 + 3];
+      if (alpha === 0) {
+        continue;
+      }
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+
+  if (maxX < minX || maxY < minY) {
+    return canvas.toDataURL("image/png");
+  }
+
+  const left = Math.max(0, minX - padding);
+  const top = Math.max(0, minY - padding);
+  const right = Math.min(width, maxX + padding + 1);
+  const bottom = Math.min(height, maxY + padding + 1);
+  const cropped = document.createElement("canvas");
+  cropped.width = right - left;
+  cropped.height = bottom - top;
+  const croppedContext = cropped.getContext("2d");
+  if (!croppedContext) {
+    return canvas.toDataURL("image/png");
+  }
+
+  croppedContext.drawImage(
+    canvas,
+    left,
+    top,
+    cropped.width,
+    cropped.height,
+    0,
+    0,
+    cropped.width,
+    cropped.height,
+  );
+  return cropped.toDataURL("image/png");
 }
 
 async function loadImage(dataUrl: string): Promise<HTMLImageElement> {

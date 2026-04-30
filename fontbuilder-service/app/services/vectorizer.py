@@ -273,7 +273,7 @@ def _vector_svg_data_url(polylines: list[list[Point]], size: int) -> str:
 def _render_final_png_data_url(polylines: list[list[Point]], size: int, brush_size: int) -> str:
     oversample = 4
     render_size = size * oversample
-    image = Image.new("L", (render_size, render_size), 255)
+    image = Image.new("RGBA", (render_size, render_size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     stroke_width = max(2, int(round(brush_size * (size / 720) * oversample)))
     radius = max(1.0, stroke_width / 2)
@@ -291,7 +291,7 @@ def _render_final_png_data_url(polylines: list[list[Point]], size: int, brush_si
                     scaled_x + radius,
                     scaled_y + radius,
                 ),
-                fill=17,
+                fill=(17, 17, 17, 255),
             )
             continue
 
@@ -300,9 +300,10 @@ def _render_final_png_data_url(polylines: list[list[Point]], size: int, brush_si
             _stamp_brush_segment(draw, start, end, radius, step)
 
         for x, y in scaled:
-            draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=17)
+            draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=(17, 17, 17, 255))
 
-    image = image.resize((size, size), Image.Resampling.LANCZOS).convert("RGB")
+    image = image.resize((size, size), Image.Resampling.LANCZOS)
+    image = _crop_transparent_image(image, padding=max(8, round(size * 0.03)))
 
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
@@ -329,7 +330,23 @@ def _stamp_brush_segment(
         t = index / steps
         x = x1 + (x2 - x1) * t
         y = y1 + (y2 - y1) * t
-        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=17)
+        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=(17, 17, 17, 255))
+
+
+def _crop_transparent_image(image: Image.Image, padding: int) -> Image.Image:
+    bbox = image.getbbox()
+    if bbox is None:
+        return image
+
+    left, top, right, bottom = bbox
+    return image.crop(
+        (
+            max(0, left - padding),
+            max(0, top - padding),
+            min(image.width, right + padding),
+            min(image.height, bottom + padding),
+        )
+    )
 
 
 def _cap_polyline_complexity(polylines: list[list[Point]]) -> list[list[Point]]:
