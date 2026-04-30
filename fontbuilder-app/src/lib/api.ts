@@ -40,6 +40,7 @@ export type SessionResponse = {
   batch_run_ids: string[];
   pending_revision_characters: string[];
   active_revision_job_id: string;
+  export_glyph_overrides: GlyphOutlineExportItem[];
   normalized_glyphs: GlyphOutlineExportItem[];
   font_file_data_url: string;
 };
@@ -109,7 +110,8 @@ export type AdditionalReferenceInput = {
 export type FontsketchEventType =
   | "draw_confirmed"
   | "single_glyph_approved"
-  | "alphabet_confirmed";
+  | "alphabet_confirmed"
+  | "alphabet_redo_requested";
 
 export async function submitGlyphGeneration(
   blob: Blob,
@@ -339,6 +341,7 @@ export async function updateSession(
     batch_run_ids?: string[];
     pending_revision_characters?: string[];
     active_revision_job_id?: string;
+    export_glyph_overrides?: GlyphOutlineExportItem[];
     normalized_glyphs?: GlyphOutlineExportItem[];
     font_file_data_url?: string;
   },

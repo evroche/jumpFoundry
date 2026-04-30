@@ -14,6 +14,7 @@ Pixel = tuple[int, int]
 MAX_TOTAL_POLYLINE_POINTS = 12000
 MAX_POINTS_PER_POLYLINE = 600
 MAX_VECTOR_DATA_URL_CHARS = 2_000_000
+FINAL_RENDER_BRUSH_SCALE = 2.0
 
 
 def vectorize_centerline_and_render(
@@ -274,7 +275,7 @@ def _render_final_png_data_url(polylines: list[list[Point]], size: int, brush_si
     render_size = size * oversample
     image = Image.new("RGBA", (render_size, render_size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    stroke_width = max(2, int(round(brush_size * (size / 720) * oversample)))
+    stroke_width = max(2, int(round(brush_size * FINAL_RENDER_BRUSH_SCALE * (size / 720) * oversample)))
     radius = max(1.0, stroke_width / 2)
     step = max(1.0, radius * 0.22)
 

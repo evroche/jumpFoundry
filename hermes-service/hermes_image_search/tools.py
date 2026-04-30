@@ -124,28 +124,36 @@ def _data_url_to_bytes(data_url: str) -> bytes:
 
 def _session_export_glyphs(session_payload: dict) -> list[dict[str, str]]:
     glyph_map: dict[str, dict[str, str]] = {}
+    for glyph in session_payload.get("export_glyph_overrides", []) or []:
+        character = _normalize_letter(glyph.get("character", "A"))
+        image_data_url = glyph.get("image_data_url", "")
+        if image_data_url:
+            glyph_map[character] = {"character": character, "image_data_url": image_data_url}
+
     for seed in session_payload.get("seed_references", []) or []:
         character = _normalize_letter(seed.get("character", "A"))
         image_data_url = seed.get("image_data_url", "")
-        if image_data_url:
+        if image_data_url and character not in glyph_map:
             glyph_map[character] = {"character": character, "image_data_url": image_data_url}
 
     latest_run_id = (session_payload.get("latest_run_id") or "").strip()
     if latest_run_id:
         run = _load_run(latest_run_id)
         image_data_url = run.get("generated_image_data_url", "")
-        if image_data_url:
-            glyph_map[_normalize_letter(run.get("target_character", "A"))] = {
-                "character": _normalize_letter(run.get("target_character", "A")),
+        run_character = _normalize_letter(run.get("target_character", "A"))
+        if image_data_url and run_character not in glyph_map:
+            glyph_map[run_character] = {
+                "character": run_character,
                 "image_data_url": image_data_url,
             }
 
     for run_id in session_payload.get("batch_run_ids", []) or []:
         run = _load_run(run_id)
         image_data_url = run.get("generated_image_data_url", "")
-        if image_data_url:
-            glyph_map[_normalize_letter(run.get("target_character", "A"))] = {
-                "character": _normalize_letter(run.get("target_character", "A")),
+        run_character = _normalize_letter(run.get("target_character", "A"))
+        if image_data_url and run_character not in glyph_map:
+            glyph_map[run_character] = {
+                "character": run_character,
                 "image_data_url": image_data_url,
             }
 
@@ -437,6 +445,7 @@ def generate_fontsketch_review_glyph(args: dict, **kwargs) -> str:
             ],
             "batch_run_ids": [],
             "pending_revision_characters": [],
+            "export_glyph_overrides": [],
             "normalized_glyphs": [],
             "font_file_data_url": "",
             "current_drawing_image_data_url": "",
@@ -523,6 +532,7 @@ def generate_fontsketch_alphabet_batch(args: dict, **kwargs) -> str:
             "batch_run_ids": batch_run_ids,
             "selected_revision_characters": [],
             "pending_revision_characters": [],
+            "export_glyph_overrides": [],
             "normalized_glyphs": [],
             "font_file_data_url": "",
             "current_drawing_image_data_url": "",

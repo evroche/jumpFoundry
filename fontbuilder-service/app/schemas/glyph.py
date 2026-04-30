@@ -129,6 +129,7 @@ class FontSessionResponse(BaseModel):
     batch_run_ids: list[str] = []
     pending_revision_characters: list[str] = []
     active_revision_job_id: str = ""
+    export_glyph_overrides: list[GlyphOutlineExportItem] = []
     normalized_glyphs: list[GlyphOutlineExportItem] = []
     font_file_data_url: str = ""
 
@@ -150,6 +151,7 @@ class FontSessionUpdateRequest(BaseModel):
     batch_run_ids: list[str] | None = None
     pending_revision_characters: list[str] | None = None
     active_revision_job_id: str | None = None
+    export_glyph_overrides: list[GlyphOutlineExportItem] | None = None
     normalized_glyphs: list[GlyphOutlineExportItem] | None = None
     font_file_data_url: str | None = None
 

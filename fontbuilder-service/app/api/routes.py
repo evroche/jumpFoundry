@@ -61,6 +61,7 @@ def _build_session_response(session_id: str, session: dict, frontend_url: str | 
         batch_run_ids=session.get("batch_run_ids", []),
         pending_revision_characters=session.get("pending_revision_characters", []),
         active_revision_job_id=session.get("active_revision_job_id", ""),
+        export_glyph_overrides=session.get("export_glyph_overrides", []),
         normalized_glyphs=session.get("normalized_glyphs", []),
         font_file_data_url=session.get("font_file_data_url", ""),
     )

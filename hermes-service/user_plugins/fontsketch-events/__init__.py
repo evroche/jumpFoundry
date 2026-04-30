@@ -12,7 +12,8 @@ PATH = "/fontsketch-event"
 ALLOWED_EVENTS = {
     "draw_confirmed": "done",
     "single_glyph_approved": "done",
-    "alphabet_confirmed": "done",
+    "alphabet_confirmed": "continue",
+    "alphabet_redo_requested": "I'm ready with some changes.",
 }
 
 ALLOWED_ORIGINS = {

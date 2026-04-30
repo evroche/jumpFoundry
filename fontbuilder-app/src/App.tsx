@@ -38,6 +38,7 @@ const BRUSH_OPTIONS = [
   { value: 19, label: "Medium" },
   { value: 11, label: "Small" },
 ] as const;
+const FINAL_RENDER_BRUSH_SCALE = 2;
 const FIRST_SEED_CHARACTER = "E";
 const SECOND_SEED_CHARACTER = "S";
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
@@ -166,6 +167,7 @@ export default function App() {
     ]),
   );
   const seedVectorSignature = JSON.stringify(seedVectorImages);
+  const batchAdjustedFinalImagesSignature = JSON.stringify(batchAdjustedFinalImages);
   const normalizedGlyphMap = new Map(
     normalizedExportGlyphs.map((glyph) => [normalizeLetter(glyph.character), glyph.image_data_url]),
   );
@@ -1012,7 +1014,7 @@ export default function App() {
     let isActive = true;
     void (async () => {
       try {
-        const glyphs = await buildExportGlyphs(seedReferences, result, batchResult);
+        const glyphs = await buildExportGlyphs(seedReferences, result, batchResult, batchAdjustedFinalImages);
         const normalized = await normalizeGlyphSet(sessionId, glyphs);
         if (!isActive) {
           return;
@@ -1029,7 +1031,7 @@ export default function App() {
     return () => {
       isActive = false;
     };
-  }, [sessionId, seedReferences, result, batchResult]);
+  }, [sessionId, seedReferences, result, batchResult, batchAdjustedFinalImagesSignature]);
 
   useEffect(() => {
     if (!sessionId || !batchResult) {
@@ -1496,7 +1498,14 @@ export default function App() {
     setErrorMessage("");
 
     try {
-      const fontBlob = previewFontBlob ?? await buildPreviewFontBlob(sessionId, seedReferences, result, batchResult, normalizedExportGlyphs);
+      const fontBlob = previewFontBlob ?? await buildPreviewFontBlob(
+        sessionId,
+        seedReferences,
+        result,
+        batchResult,
+        normalizedExportGlyphs,
+        batchAdjustedFinalImages,
+      );
       setPreviewFontBlob(fontBlob);
       const normalizedFontName = (session?.font_name || "").trim();
       const downloadName = normalizedFontName
@@ -1553,7 +1562,14 @@ export default function App() {
         ?? (
           session.font_file_data_url
             ? dataUrlToBlob(session.font_file_data_url)
-            : await buildPreviewFontBlob(sessionId, seedReferences, result as RunResponse, batchResult as BatchResponse, normalizedExportGlyphs)
+            : await buildPreviewFontBlob(
+                sessionId,
+                seedReferences,
+                result as RunResponse,
+                batchResult as BatchResponse,
+                normalizedExportGlyphs,
+                batchAdjustedFinalImages,
+              )
         );
       setPreviewFontBlob(fontBlob);
       await loadPreviewFont(fontBlob, previewFontFamily);
@@ -1673,20 +1689,56 @@ export default function App() {
       seedCount: session?.seed_references?.length ?? seedReferences.length,
       postBatchStage,
     });
-    void postHermesFontsketchEvent({
-      eventType: "alphabet_confirmed",
-      fontsketchSessionId: sessionId,
-      payload: {
-        current_status: "User confirmed the alphabet board.",
-        selected_revision_characters: selectedBatchLetters.map(normalizeLetter),
-        batch_characters: batchItems.map((item) => normalizeLetter(item.target_character)),
-      },
-    }).then((queued) => {
+    void (async () => {
+      try {
+        if (result && batchResult && seedReferences.length >= 2) {
+          const exportGlyphOverrides = await buildExportGlyphs(
+            seedReferences,
+            result,
+            batchResult,
+            batchAdjustedFinalImages,
+          );
+          await updateSession(sessionId, {
+            export_glyph_overrides: exportGlyphOverrides,
+          });
+        }
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "Failed to prepare the current alphabet for export.");
+        setPendingHermesConfirm(null);
+        await endTransition();
+        return;
+      }
+
+      const queued = await postHermesFontsketchEvent({
+        eventType: "alphabet_confirmed",
+        fontsketchSessionId: sessionId,
+        payload: {
+          current_status: "User confirmed the alphabet board.",
+          selected_revision_characters: selectedBatchLetters.map(normalizeLetter),
+          batch_characters: batchItems.map((item) => normalizeLetter(item.target_character)),
+        },
+      });
       if (queued) {
         return;
       }
       setPendingHermesConfirm(null);
-      void endTransition();
+      await endTransition();
+    })();
+  }
+
+  function postAlphabetRedoEvent() {
+    if (!sessionId) {
+      return;
+    }
+
+    void postHermesFontsketchEvent({
+      eventType: "alphabet_redo_requested",
+      fontsketchSessionId: sessionId,
+      payload: {
+        current_status: "User is ready to request changes from the alphabet board.",
+        selected_revision_characters: selectedBatchLetters.map(normalizeLetter),
+        batch_characters: batchItems.map((item) => normalizeLetter(item.target_character)),
+      },
     });
   }
 
@@ -1756,6 +1808,7 @@ export default function App() {
                       type="button"
                       className="session-icon-button"
                       aria-label="Redo"
+                      onClick={postAlphabetRedoEvent}
                     >
                       <img src={redoIcon} alt="" className="session-icon-image" />
                     </button>
@@ -1852,28 +1905,14 @@ export default function App() {
                 </section>
 
                 <div className="session-review-actions session-review-actions-centered">
-                  <div className="session-review-actions-leading" aria-hidden="true">
-                    <button
-                      type="button"
-                      className="session-icon-button session-review-balance-placeholder"
-                      tabIndex={-1}
-                    >
-                      <img src={approveIcon} alt="" className="session-icon-image" />
-                    </button>
-                  </div>
-                  <div className="session-review-character" aria-label={`Character ${result.target_character}`}>
-                    {result.target_character}
-                  </div>
-                  <div className="session-review-actions-trailing">
-                    <button
-                      type="button"
-                      className="session-icon-button"
-                      aria-label="Confirm"
-                      onClick={postSingleGlyphApprovedEvent}
-                    >
-                      <img src={approveIcon} alt="" className="session-icon-image" />
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    className="session-icon-button"
+                    aria-label="Confirm"
+                    onClick={postSingleGlyphApprovedEvent}
+                  >
+                    <img src={approveIcon} alt="" className="session-icon-image" />
+                  </button>
                 </div>
               </div>
             </section>
@@ -2183,22 +2222,28 @@ async function buildExportGlyphs(
   seedReferences: SeedReference[],
   result: RunResponse,
   batchResult: BatchResponse,
+  finalGlyphImageOverrides: Record<string, string> = {},
 ): Promise<GlyphOutlineExportItem[]> {
   const normalizedSeeds = await Promise.all(
-    seedReferences.map(async (reference) => ({
-      character: normalizeLetter(reference.character),
-      image_data_url: await blobToDataUrl(reference.blob),
-    })),
+    seedReferences.map(async (reference) => {
+      const character = normalizeLetter(reference.character);
+      return {
+        character,
+        image_data_url: finalGlyphImageOverrides[character] || await blobToDataUrl(reference.blob),
+      };
+    }),
   );
+  const resultCharacter = normalizeLetter(result.target_character);
   const glyphs = [
     ...normalizedSeeds,
     {
-      character: result.target_character,
-      image_data_url: result.generated_image_data_url,
+      character: resultCharacter,
+      image_data_url: finalGlyphImageOverrides[resultCharacter] || result.generated_image_data_url,
     },
     ...batchResult.items.map((item) => ({
-      character: item.target_character,
-      image_data_url: item.generated_image_data_url,
+      character: normalizeLetter(item.target_character),
+      image_data_url:
+        finalGlyphImageOverrides[normalizeLetter(item.target_character)] || item.generated_image_data_url,
     })),
   ];
   const dedupedGlyphs = new Map<string, GlyphOutlineExportItem>();
@@ -2219,10 +2264,11 @@ async function buildPreviewFontBlob(
   result: RunResponse,
   batchResult: BatchResponse,
   normalizedGlyphs: GlyphOutlineExportItem[],
+  finalGlyphImageOverrides: Record<string, string> = {},
 ): Promise<Blob> {
   const glyphs = normalizedGlyphs.length > 0
     ? normalizedGlyphs
-    : await buildNormalizedExportGlyphs(sessionId, seedReferences, result, batchResult);
+    : await buildNormalizedExportGlyphs(sessionId, seedReferences, result, batchResult, finalGlyphImageOverrides);
   return exportPartialFont(sessionId, glyphs);
 }
 
@@ -2231,8 +2277,9 @@ async function buildNormalizedExportGlyphs(
   seedReferences: SeedReference[],
   result: RunResponse,
   batchResult: BatchResponse,
+  finalGlyphImageOverrides: Record<string, string> = {},
 ): Promise<GlyphOutlineExportItem[]> {
-  const glyphs = await buildExportGlyphs(seedReferences, result, batchResult);
+  const glyphs = await buildExportGlyphs(seedReferences, result, batchResult, finalGlyphImageOverrides);
   const normalized = await normalizeGlyphSet(sessionId, glyphs);
   return normalized.glyphs;
 }
@@ -2619,7 +2666,10 @@ async function renderBrushPreview(
   context.strokeStyle = "#111111";
   context.lineCap = "round";
   context.lineJoin = "round";
-  context.lineWidth = Math.max(2, brushSize * (trace.size / Math.max(sourceCanvasSize, 1)));
+  context.lineWidth = Math.max(
+    2,
+    brushSize * FINAL_RENDER_BRUSH_SCALE * (trace.size / Math.max(sourceCanvasSize, 1)),
+  );
 
   for (const path of trace.paths) {
     if (path.length === 0) {

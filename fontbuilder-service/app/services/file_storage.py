@@ -131,6 +131,7 @@ class RunStorage:
             "batch_run_ids": [],
             "pending_revision_characters": [],
             "active_revision_job_id": "",
+            "export_glyph_overrides": [],
             "normalized_glyphs": [],
             "font_file_data_url": "",
             "created_at": datetime.now(UTC).isoformat(),

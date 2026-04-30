@@ -281,6 +281,7 @@ textarea {
   padding: 0;
   font-size: 1rem;
   line-height: 1;
+  transition: transform 120ms ease;
 }
 
 .session-step-button + .session-step-button {
@@ -371,11 +372,6 @@ textarea {
   opacity: 1;
 }
 
-.session-icon-button:hover:not(:disabled),
-.session-submit-button:hover:not(:disabled) {
-  transform: scale(1.05);
-}
-
 .session-submit-button {
   width: auto;
   min-width: 0;
@@ -401,6 +397,8 @@ textarea {
   width: 140px;
   height: 140px;
   display: block;
+  transition: transform 120ms ease;
+  transform-origin: center center;
   -webkit-user-drag: none;
   user-select: none;
   pointer-events: none;
@@ -412,6 +410,8 @@ textarea {
   display: block;
   filter: none;
   margin: auto;
+  transition: transform 120ms ease;
+  transform-origin: center center;
   -webkit-user-drag: none;
   user-select: none;
   pointer-events: none;
@@ -424,6 +424,12 @@ textarea {
   -webkit-user-drag: none;
   user-select: none;
   pointer-events: none;
+}
+
+.session-icon-button:hover:not(:disabled),
+.session-submit-button:hover:not(:disabled),
+.session-step-button:hover {
+  transform: scale(1.05);
 }
 
 .session-review-layout {
@@ -695,19 +701,9 @@ textarea {
   z-index: 3;
 }
 
-.session-font-preview-actions .session-icon-image,
-.session-font-preview-actions .session-submit-icon {
-  width: 168px;
-  height: 168px;
-}
-
 .session-font-preview-actions .session-icon-button,
 .session-font-preview-actions .session-submit-button {
   pointer-events: auto;
-}
-
-.session-font-preview-action-button {
-  height: 168px;
 }
 
 .session-font-preview-textarea {
