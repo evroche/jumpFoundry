@@ -537,8 +537,21 @@ textarea {
   flex: 0 0 auto;
 }
 
+.session-review-actions-leading {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--session-toolbar-gap);
+  margin-right: 0;
+  flex: 0 0 auto;
+}
+
 .session-review-actions-spacer {
   display: none;
+}
+
+.session-review-balance-placeholder {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .session-review-character {

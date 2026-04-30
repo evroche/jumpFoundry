@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import approveIcon from "./assets/material-icons/approveCOMPACT.svg";
 import biggerIcon from "./assets/material-icons/bigger.svg";
 import clearIcon from "./assets/material-icons/clearCOMPACT.svg";
 import downloadIcon from "./assets/material-icons/download.svg";
@@ -17,6 +18,7 @@ import {
   fetchRun,
   fetchSession,
   normalizeGlyphSet,
+  postHermesFontsketchEvent,
   submitSkeletonPreview,
   submitGlyphGeneration,
   submitGlyphVectorization,
@@ -46,6 +48,18 @@ type SeedReference = {
   previewUrl: string;
 };
 
+type PendingHermesConfirm = {
+  kind: "draw" | "single" | "alphabet";
+  sourceCharacter: string;
+  targetCharacter: string;
+  latestRunId: string;
+  batchRunIdsSignature: string;
+  status: string;
+  stage: string;
+  seedCount: number;
+  postBatchStage: "grid" | "preview";
+};
+
 export default function App() {
   const sessionId = readSessionIdFromPath();
   const previewFontFamily = "FontsketchPreview";
@@ -64,6 +78,7 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("");
+  const [pendingHermesConfirm, setPendingHermesConfirm] = useState<PendingHermesConfirm | null>(null);
   const [postBatchStage, setPostBatchStage] = useState<"grid" | "preview">("grid");
   const [previewText, setPreviewText] = useState("the quick brown fox jumped over the lazy dog");
   const [previewFontSizeOffset, setPreviewFontSizeOffset] = useState(0);
@@ -110,6 +125,7 @@ export default function App() {
   const shouldShowWorkingLoader = !isInlineBatchRevision && Boolean(
     loadingMessage ||
     isSubmitting ||
+    pendingHermesConfirm ||
     isSessionWorking ||
     isWaitingForFontName
   );
@@ -518,6 +534,72 @@ export default function App() {
   }, [sessionId]);
 
   useEffect(() => {
+    if (!pendingHermesConfirm) {
+      return;
+    }
+
+    const currentSourceCharacter = normalizeLetter(session?.source_character || sourceCharacter);
+    const currentTargetCharacter = normalizeLetter(session?.target_character || targetCharacter);
+    const currentLatestRunId = session?.latest_run_id || result?.run_id || "";
+    const currentBatchRunIdsSignature = JSON.stringify(session?.batch_run_ids ?? []);
+    const currentSeedCount = session?.seed_references?.length ?? seedReferences.length;
+    const currentStatus = session?.status ?? "ready";
+    const currentStage = session?.stage ?? "draw";
+
+    let hasProgress = false;
+    if (pendingHermesConfirm.kind === "draw") {
+      hasProgress = Boolean(
+        currentSourceCharacter !== pendingHermesConfirm.sourceCharacter ||
+        currentTargetCharacter !== pendingHermesConfirm.targetCharacter ||
+        currentLatestRunId !== pendingHermesConfirm.latestRunId ||
+        currentStatus !== pendingHermesConfirm.status ||
+        currentStage !== pendingHermesConfirm.stage ||
+        currentSeedCount !== pendingHermesConfirm.seedCount ||
+        result ||
+        batchResult,
+      );
+    } else if (pendingHermesConfirm.kind === "single") {
+      hasProgress = Boolean(
+        currentStatus !== pendingHermesConfirm.status ||
+        currentLatestRunId !== pendingHermesConfirm.latestRunId ||
+        currentBatchRunIdsSignature !== pendingHermesConfirm.batchRunIdsSignature ||
+        postBatchStage !== pendingHermesConfirm.postBatchStage ||
+        batchResult,
+      );
+    } else {
+      hasProgress = Boolean(
+        currentStatus !== pendingHermesConfirm.status ||
+        currentStage !== pendingHermesConfirm.stage ||
+        postBatchStage !== pendingHermesConfirm.postBatchStage ||
+        session?.font_file_data_url,
+      );
+    }
+
+    if (!hasProgress) {
+      return;
+    }
+
+    setPendingHermesConfirm(null);
+    void endTransition();
+  }, [
+    pendingHermesConfirm,
+    session?.source_character,
+    session?.target_character,
+    session?.latest_run_id,
+    session?.batch_run_ids,
+    session?.seed_references,
+    session?.status,
+    session?.stage,
+    session?.font_file_data_url,
+    sourceCharacter,
+    targetCharacter,
+    result,
+    batchResult,
+    seedReferences.length,
+    postBatchStage,
+  ]);
+
+  useEffect(() => {
     if (
       !sessionId ||
       !session ||
@@ -762,26 +844,36 @@ export default function App() {
       return;
     }
 
-    if (result.interpreted_vector_data_url && result.final_render_data_url) {
-      setInterpretedVectorImage(sanitizeVectorSvgDataUrl(result.interpreted_vector_data_url));
-      setFinalRenderImage(result.final_render_data_url);
-      setIsPreparingReviewArtifacts(false);
-      return;
-    }
-
     let isActive = true;
     setIsPreparingReviewArtifacts(true);
-    void buildReviewArtifacts(
-      result.generated_image_data_url,
-      drawingData?.brush_size ?? brushSize,
-      drawingData?.canvas_size ?? SESSION_CANVAS_SIZE,
+    const activeBrushSize = drawingData?.brush_size ?? brushSize;
+    const activeCanvasSize = drawingData?.canvas_size ?? SESSION_CANVAS_SIZE;
+
+    void (
+      result.interpreted_vector_data_url
+        ? Promise.resolve({
+            vectorImageDataUrl: sanitizeVectorSvgDataUrl(result.interpreted_vector_data_url),
+            finalImageDataUrl: result.final_render_data_url,
+          })
+        : buildReviewArtifacts(
+            result.generated_image_data_url,
+            activeBrushSize,
+            activeCanvasSize,
+          )
     )
       .then((artifacts) => {
         if (!isActive) {
           return;
         }
-        setInterpretedVectorImage(sanitizeVectorSvgDataUrl(artifacts.vectorImageDataUrl));
-        setFinalRenderImage(artifacts.finalImageDataUrl);
+        const sanitizedVector = sanitizeVectorSvgDataUrl(artifacts.vectorImageDataUrl);
+        setInterpretedVectorImage(sanitizedVector);
+        void buildReviewDisplayFinalImage(sanitizedVector, activeBrushSize, activeCanvasSize)
+          .then((displayFinalImage) => {
+            if (!isActive) {
+              return;
+            }
+            setFinalRenderImage(displayFinalImage || artifacts.finalImageDataUrl);
+          });
       })
       .catch((error) => {
         if (!isActive) {
@@ -1494,6 +1586,110 @@ export default function App() {
     setPreviewFontSizeOffset((current) => current + (direction === "bigger" ? 6 : -6));
   }
 
+  function postDrawConfirmedEvent() {
+    if (!sessionId) {
+      return;
+    }
+    beginTransition(
+      seedReferences.length === 0
+        ? "I’m recording your first letter and moving to the next drawing step now."
+        : "I’m generating the first sample character for you to review now.",
+    );
+    setPendingHermesConfirm({
+      kind: "draw",
+      sourceCharacter: normalizeLetter(session?.source_character || sourceCharacter),
+      targetCharacter: normalizeLetter(session?.target_character || targetCharacter || sourceCharacter),
+      latestRunId: session?.latest_run_id || result?.run_id || "",
+      batchRunIdsSignature: JSON.stringify(session?.batch_run_ids ?? []),
+      status: session?.status ?? "ready",
+      stage: session?.stage ?? "draw",
+      seedCount: session?.seed_references?.length ?? seedReferences.length,
+      postBatchStage,
+    });
+    void postHermesFontsketchEvent({
+      eventType: "draw_confirmed",
+      fontsketchSessionId: sessionId,
+      payload: {
+        current_status: "User confirmed the current drawn glyph.",
+        source_glyph: normalizeLetter(sourceCharacter),
+        target_glyph: normalizeLetter(targetCharacter || sourceCharacter),
+        stage: session?.stage ?? "draw",
+      },
+    }).then((queued) => {
+      if (queued) {
+        return;
+      }
+      setPendingHermesConfirm(null);
+      void endTransition();
+    });
+  }
+
+  function postSingleGlyphApprovedEvent() {
+    if (!sessionId || !result) {
+      return;
+    }
+    beginTransition("I’m moving on to generate the rest of the alphabet now.");
+    setPendingHermesConfirm({
+      kind: "single",
+      sourceCharacter: normalizeLetter(session?.source_character || result.source_character),
+      targetCharacter: normalizeLetter(session?.target_character || result.target_character),
+      latestRunId: session?.latest_run_id || result.run_id,
+      batchRunIdsSignature: JSON.stringify(session?.batch_run_ids ?? []),
+      status: session?.status ?? "ready",
+      stage: session?.stage ?? "review",
+      seedCount: session?.seed_references?.length ?? seedReferences.length,
+      postBatchStage,
+    });
+    void postHermesFontsketchEvent({
+      eventType: "single_glyph_approved",
+      fontsketchSessionId: sessionId,
+      payload: {
+        current_status: "User approved the generated glyph on the single-letter review page.",
+        approved_glyph: normalizeLetter(result.target_character),
+        source_glyph: normalizeLetter(result.source_character),
+      },
+    }).then((queued) => {
+      if (queued) {
+        return;
+      }
+      setPendingHermesConfirm(null);
+      void endTransition();
+    });
+  }
+
+  function postAlphabetConfirmedEvent() {
+    if (!sessionId) {
+      return;
+    }
+    beginTransition("I’m moving on to the next step now.");
+    setPendingHermesConfirm({
+      kind: "alphabet",
+      sourceCharacter: normalizeLetter(session?.source_character || sourceCharacter),
+      targetCharacter: normalizeLetter(session?.target_character || targetCharacter),
+      latestRunId: session?.latest_run_id || result?.run_id || "",
+      batchRunIdsSignature: JSON.stringify(session?.batch_run_ids ?? []),
+      status: session?.status ?? "ready",
+      stage: session?.stage ?? "review",
+      seedCount: session?.seed_references?.length ?? seedReferences.length,
+      postBatchStage,
+    });
+    void postHermesFontsketchEvent({
+      eventType: "alphabet_confirmed",
+      fontsketchSessionId: sessionId,
+      payload: {
+        current_status: "User confirmed the alphabet board.",
+        selected_revision_characters: selectedBatchLetters.map(normalizeLetter),
+        batch_characters: batchItems.map((item) => normalizeLetter(item.target_character)),
+      },
+    }).then((queued) => {
+      if (queued) {
+        return;
+      }
+      setPendingHermesConfirm(null);
+      void endTransition();
+    });
+  }
+
   function adjustBatchRenderBrushSize(direction: "smaller" | "bigger") {
     setBatchRenderBrushSize((current) => {
       const delta = direction === "bigger" ? 6 : -6;
@@ -1555,6 +1751,21 @@ export default function App() {
                       aria-label="Bigger X stroke"
                     >
                       <img src={biggerIcon} alt="" className="session-icon-image" />
+                    </button>
+                    <button
+                      type="button"
+                      className="session-icon-button"
+                      aria-label="Redo"
+                    >
+                      <img src={redoIcon} alt="" className="session-icon-image" />
+                    </button>
+                    <button
+                      type="button"
+                      className="session-icon-button"
+                      aria-label="Confirm"
+                      onClick={postAlphabetConfirmedEvent}
+                    >
+                      <img src={approveIcon} alt="" className="session-icon-image" />
                     </button>
                   </div>
                 </div>
@@ -1641,8 +1852,27 @@ export default function App() {
                 </section>
 
                 <div className="session-review-actions session-review-actions-centered">
+                  <div className="session-review-actions-leading" aria-hidden="true">
+                    <button
+                      type="button"
+                      className="session-icon-button session-review-balance-placeholder"
+                      tabIndex={-1}
+                    >
+                      <img src={approveIcon} alt="" className="session-icon-image" />
+                    </button>
+                  </div>
                   <div className="session-review-character" aria-label={`Character ${result.target_character}`}>
                     {result.target_character}
+                  </div>
+                  <div className="session-review-actions-trailing">
+                    <button
+                      type="button"
+                      className="session-icon-button"
+                      aria-label="Confirm"
+                      onClick={postSingleGlyphApprovedEvent}
+                    >
+                      <img src={approveIcon} alt="" className="session-icon-image" />
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1729,6 +1959,12 @@ export default function App() {
 
                   <button type="button" className="session-icon-button" onClick={() => sessionCanvasRef.current?.clear()} aria-label="Clear">
                     <img src={clearIcon} alt="" className="session-icon-image" />
+                  </button>
+
+                  <div className="session-controls-separator" aria-hidden="true" />
+
+                  <button type="button" className="session-icon-button" aria-label="Confirm" onClick={postDrawConfirmedEvent}>
+                    <img src={approveIcon} alt="" className="session-icon-image" />
                   </button>
                 </div>
               </div>
@@ -2153,6 +2389,18 @@ function parseVectorPathData(pathData: string): VectorPathPoint[] {
   return points;
 }
 
+async function buildReviewDisplayFinalImage(
+  vectorDataUrl: string,
+  brushSize: number,
+  sourceCanvasSize: number,
+): Promise<string> {
+  const trace = parseVectorSvgDataUrl(vectorDataUrl);
+  if (!trace) {
+    return "";
+  }
+  return renderBrushPreview(trace, brushSize, sourceCanvasSize, false);
+}
+
 function buildDrawingSignature(drawing: DrawingVectorData): string {
   return JSON.stringify(
     drawing.strokes.map((stroke) => ({
@@ -2358,6 +2606,7 @@ async function renderBrushPreview(
   trace: VectorTrace,
   brushSize: number,
   sourceCanvasSize: number,
+  cropToBounds = true,
 ): Promise<string> {
   const canvas = document.createElement("canvas");
   canvas.width = trace.size;
@@ -2382,6 +2631,10 @@ async function renderBrushPreview(
       context.lineTo(point.x, point.y);
     }
     context.stroke();
+  }
+
+  if (!cropToBounds) {
+    return canvas.toDataURL("image/png");
   }
 
   return cropCanvasToContentDataUrl(canvas, Math.max(8, Math.round(trace.size * 0.03)));

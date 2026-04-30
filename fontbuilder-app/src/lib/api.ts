@@ -106,6 +106,11 @@ export type AdditionalReferenceInput = {
   character: string;
 };
 
+export type FontsketchEventType =
+  | "draw_confirmed"
+  | "single_glyph_approved"
+  | "alphabet_confirmed";
+
 export async function submitGlyphGeneration(
   blob: Blob,
   sourceCharacter: string,
@@ -275,6 +280,38 @@ export async function submitGlyphVectorization(
   }
 
   return response.json();
+}
+
+export async function postHermesFontsketchEvent(args: {
+  eventType: FontsketchEventType;
+  fontsketchSessionId: string;
+  payload: Record<string, unknown>;
+}): Promise<boolean> {
+  const eventId =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random()}`;
+
+  try {
+    const response = await fetch("http://127.0.0.1:8765/fontsketch-event", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        event_id: eventId,
+        event_type: args.eventType,
+        payload: {
+          fontsketch_session_id: args.fontsketchSessionId,
+          ...args.payload,
+        },
+      }),
+    });
+    return response.ok;
+  } catch (error) {
+    console.warn("Hermes event delivery failed:", error);
+    return false;
+  }
 }
 
 export async function requestSessionApprove(sessionId: string): Promise<SessionResponse> {
