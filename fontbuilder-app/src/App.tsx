@@ -981,6 +981,8 @@ export default function App() {
             previewUrl: URL.createObjectURL(referenceBlob),
           },
         ]);
+        setReferenceBlob(null);
+        setDrawingData(null);
         setSourceCharacter(SECOND_SEED_CHARACTER);
         setTargetCharacter(nextAlphabetCharacter(firstSeedCharacter));
         setSkeletonPreview(null);
@@ -1492,6 +1494,7 @@ export default function App() {
                       ref={sessionCanvasRef}
                       onExportReady={setReferenceBlob}
                       onVectorChange={setDrawingData}
+                      initialDrawing={drawingData}
                       size={SESSION_CANVAS_SIZE}
                       brushSize={brushSize}
                       showToolbar={false}
