@@ -613,7 +613,7 @@ export default function App() {
         current.filter((character) => !nextPendingLetters.includes(normalizeLetter(character))),
       );
     }
-  }, [session?.pending_revision_characters]);
+  }, [session?.pending_revision_characters, session?.selected_revision_characters, session?.status]);
 
   useEffect(() => {
     if (!session?.font_file_data_url || postBatchStage === "preview") {
@@ -888,7 +888,7 @@ export default function App() {
   }, [sessionId, seedReferences, result, batchResult]);
 
   useEffect(() => {
-    if (!sessionId || !batchResult || session?.status === "generating_batch") {
+    if (!sessionId || !batchResult) {
       return;
     }
 

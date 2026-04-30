@@ -603,8 +603,17 @@ def submit_fontsketch_revision(args: dict, **kwargs) -> str:
         return json.dumps(session_payload)
 
     session_id = session_payload["session_id"]
-    if (session_payload.get("pending_revision_characters") or []) or session_payload.get("status") == "generating_batch":
-        pending_label = ", ".join(session_payload.get("pending_revision_characters") or [])
+    target_letters = session_payload.get("selected_revision_characters", []) or [session_payload.get("target_character", "")]
+    seed_references = session_payload.get("seed_references", []) or []
+    if len(seed_references) < 2:
+        return json.dumps({"error": "Fontsketch needs both seed letters before I can apply that revision."})
+
+    normalized_targets = [_normalize_letter(letter, "") for letter in target_letters if letter]
+    pending_targets = [_normalize_letter(letter, "") for letter in (session_payload.get("pending_revision_characters") or []) if letter]
+    available_targets = [letter for letter in normalized_targets if letter and letter not in pending_targets]
+    blocked_targets = [letter for letter in normalized_targets if letter and letter in pending_targets]
+    if normalized_targets and not available_targets:
+        pending_label = ", ".join(blocked_targets or pending_targets)
         return json.dumps(
             {
                 "error": (
@@ -615,12 +624,6 @@ def submit_fontsketch_revision(args: dict, **kwargs) -> str:
             }
         )
 
-    target_letters = session_payload.get("selected_revision_characters", []) or [session_payload.get("target_character", "")]
-    seed_references = session_payload.get("seed_references", []) or []
-    if len(seed_references) < 2:
-        return json.dumps({"error": "Fontsketch needs both seed letters before I can apply that revision."})
-
-    normalized_targets = [_normalize_letter(letter, "") for letter in target_letters if letter]
     target_label = ", ".join(normalized_targets) or _normalize_letter(session_payload.get("target_character", "F"), "F")
     is_batch_revision = bool(session_payload.get("selected_revision_characters"))
     if not is_batch_revision:
@@ -648,7 +651,7 @@ def submit_fontsketch_revision(args: dict, **kwargs) -> str:
                 method="POST",
                 payload={
                     "correction": correction,
-                    "target_characters": normalized_targets,
+                    "target_characters": available_targets,
                 },
                 timeout=10.0,
             )
@@ -658,7 +661,8 @@ def submit_fontsketch_revision(args: dict, **kwargs) -> str:
                     "status": payload.get("status", "generating_batch"),
                     "instruction": payload.get("instruction", ""),
                     "correction": correction,
-                    "target_characters": payload.get("target_characters", normalized_targets),
+                    "target_characters": payload.get("target_characters", available_targets),
+                    "skipped_target_characters": blocked_targets,
                     "job_id": payload.get("job_id", ""),
                 }
             )

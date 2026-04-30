@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from datetime import UTC, datetime
+from threading import RLock
 from uuid import uuid4
 
 from app.core.config import get_settings
@@ -13,6 +14,7 @@ class RunStorage:
         self.runs_dir.mkdir(parents=True, exist_ok=True)
         self.sessions_dir = self.runs_dir / "sessions"
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
+        self._session_lock = RLock()
 
     def create_run_dir(self) -> tuple[str, Path]:
         run_id = f"run_{uuid4().hex[:10]}"
@@ -22,23 +24,26 @@ class RunStorage:
         return run_id, run_dir
 
     def create_session(self) -> str:
-        session_id = uuid4().hex[:10]
-        self.write_json(self.sessions_dir / f"{session_id}.json", self._default_session_payload(session_id))
-        return session_id
+        with self._session_lock:
+            session_id = uuid4().hex[:10]
+            self.write_json(self.sessions_dir / f"{session_id}.json", self._default_session_payload(session_id))
+            return session_id
 
     def read_session(self, session_id: str) -> dict | None:
-        path = self.sessions_dir / f"{session_id}.json"
-        if not path.exists():
-            return None
-        return self.read_json(path)
+        with self._session_lock:
+            path = self.sessions_dir / f"{session_id}.json"
+            if not path.exists():
+                return None
+            return self.read_json(path)
 
     def update_session(self, session_id: str, updates: dict) -> dict | None:
-        current = self.read_session(session_id)
-        if current is None:
-            return None
-        merged = {**current, **{key: value for key, value in updates.items() if value is not None}}
-        self.write_json(self.sessions_dir / f"{session_id}.json", merged)
-        return merged
+        with self._session_lock:
+            current = self.read_session(session_id)
+            if current is None:
+                return None
+            merged = {**current, **{key: value for key, value in updates.items() if value is not None}}
+            self.write_json(self.sessions_dir / f"{session_id}.json", merged)
+            return merged
 
     def approve_session(self, session_id: str) -> dict | None:
         current = self.read_session(session_id)
@@ -73,7 +78,19 @@ class RunStorage:
         ]
         selected = list(dict.fromkeys(selected))
         target_character = (current.get("target_character") or "B").upper()
-        if selected:
+        pending = [
+            (character[:1] or "").upper()
+            for character in (current.get("pending_revision_characters") or [])
+            if (character[:1] or "").isalpha()
+        ]
+        pending = list(dict.fromkeys(pending))
+        if selected and pending:
+            instruction = (
+                f'You\'ve selected {", ".join(selected)} for the next revision pass. '
+                f'I am still updating {", ".join(pending)} right now. '
+                "If you've already told me what to change, tell me to continue and I'll queue the next revisions."
+            )
+        elif selected:
             instruction = (
                 f'You\'ve selected {", ".join(selected)} for revisions. '
                 "If you've already told me what to change, tell me to continue and I'll make those revisions. "
@@ -88,11 +105,9 @@ class RunStorage:
         return self.update_session(
             session_id,
             {
-                "status": "awaiting_hermes_edit_prompt",
+                "status": "generating_batch" if pending else "awaiting_hermes_edit_prompt",
                 "instruction": instruction,
                 "selected_revision_characters": selected,
-                "pending_revision_characters": [],
-                "active_revision_job_id": "",
             },
         )
 

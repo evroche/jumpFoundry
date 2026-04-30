@@ -139,57 +139,22 @@ async def create_async_revision_batch(
     if not target_characters:
         raise HTTPException(status_code=400, detail="target_characters must contain at least one letter")
 
-    if revision_jobs.has_active_job(session_id) or (session.get("pending_revision_characters") or []):
-        raise HTTPException(status_code=409, detail="A revision batch is already in progress for this session")
-
-    instruction = (
-        f'I am applying that change to {", ".join(target_characters)} now. '
-        "The updated letters will appear on the board as each one finishes."
-    )
-    updated_session = storage.update_session(
-        session_id,
-        {
-            "status": "generating_batch",
-            "stage": "review",
-            "correction": correction,
-            "instruction": instruction,
-            "selected_revision_characters": target_characters,
-            "pending_revision_characters": target_characters,
-            "active_revision_job_id": "",
-            "normalized_glyphs": [],
-            "font_file_data_url": "",
-        },
-    )
-    if updated_session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
     try:
-        job_id = revision_jobs.submit_revision_batch(
+        job_id, instruction, accepted_targets = revision_jobs.submit_revision_batch(
             session_id=session_id,
             correction=correction,
             target_characters=target_characters,
         )
     except ValueError as exc:
-        storage.update_session(
-            session_id,
-            {
-                "status": "ready",
-                "instruction": "I couldn't start that revision batch. Please try again.",
-                "selected_revision_characters": [],
-                "pending_revision_characters": [],
-                "active_revision_job_id": "",
-            },
-        )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    storage.update_session(session_id, {"active_revision_job_id": job_id})
     return AsyncRevisionBatchResponse(
         backend_version=get_backend_version(),
         session_id=session_id,
         job_id=job_id,
         status="generating_batch",
         instruction=instruction,
-        target_characters=target_characters,
+        target_characters=accepted_targets,
     )
 
 
