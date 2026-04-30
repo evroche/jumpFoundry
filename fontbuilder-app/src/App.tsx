@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import approveIcon from "./assets/material-icons/approveCOMPACT.svg";
-import biggerIcon from "./assets/material-icons/bigger.svg";
+import biggerIcon from "./assets/material-icons/biggerCOMPACT.svg";
 import clearIcon from "./assets/material-icons/clearCOMPACT.svg";
-import downloadIcon from "./assets/material-icons/download.svg";
+import downloadIcon from "./assets/material-icons/downloadCOMPACT.svg";
 import {
   DrawingCanvas,
   type DrawingCanvasHandle,
@@ -11,7 +11,7 @@ import {
 import letterDownIcon from "./assets/material-icons/letter-down.svg";
 import letterUpIcon from "./assets/material-icons/letter-up.svg";
 import redoIcon from "./assets/material-icons/redoCOMPACT.svg";
-import smallerIcon from "./assets/material-icons/smaller.svg";
+import smallerIcon from "./assets/material-icons/smallerCOMPACT.svg";
 import undoIcon from "./assets/material-icons/undoCOMPACT.svg";
 import {
   exportPartialFont,
@@ -41,6 +41,7 @@ const BRUSH_OPTIONS = [
 const FINAL_RENDER_BRUSH_SCALE = 2;
 const FIRST_SEED_CHARACTER = "E";
 const SECOND_SEED_CHARACTER = "S";
+const SAMPLE_REVIEW_CHARACTER_OFFSET = 8;
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 const EXTRA_GLYPHS = ["\\", ".", "\""] as const;
 const GLYPH_GRID_ORDER = [...ALPHABET, ...EXTRA_GLYPHS];
@@ -1132,7 +1133,7 @@ export default function App() {
 
     try {
       const effectiveTargetCharacter = sessionId && session?.stage === "draw"
-        ? nextAlphabetCharacter(sourceCharacter)
+        ? sampleReviewCharacter(sourceCharacter)
         : targetCharacter;
       const nextResult = await submitGlyphGeneration(
         referenceBlob,
@@ -1182,7 +1183,7 @@ export default function App() {
       const preview = await submitSkeletonPreview({
         session_id: sessionId,
         source_character: sourceCharacter,
-        target_character: nextAlphabetCharacter(sourceCharacter),
+        target_character: sampleReviewCharacter(sourceCharacter),
         structural_mode: "stroke-path",
         drawing: drawingData,
       });
@@ -1230,14 +1231,14 @@ export default function App() {
         setReferenceBlob(null);
         setDrawingData(null);
         setSourceCharacter(SECOND_SEED_CHARACTER);
-        setTargetCharacter(nextAlphabetCharacter(firstSeedCharacter));
+        setTargetCharacter(sampleReviewCharacter(firstSeedCharacter));
         setSkeletonPreview(null);
         setSkeletonPreviewSignature("");
         setDrawStageTab("draw");
         sessionCanvasRef.current?.clear();
         await updateSession(sessionId, {
           source_character: SECOND_SEED_CHARACTER,
-          target_character: nextAlphabetCharacter(firstSeedCharacter),
+          target_character: sampleReviewCharacter(firstSeedCharacter),
           instruction: 'I recorded your first letter. Now draw the letter "S".\n\nLet me know when you\'re done and I\'ll generate the first sample character for you to review.',
           skeleton_image_data_url: "",
           current_drawing_image_data_url: "",
@@ -1257,7 +1258,7 @@ export default function App() {
       return;
     }
 
-    const nextLetterToReview = nextAlphabetCharacter(seedReferences[0]?.character ?? sourceCharacter);
+    const nextLetterToReview = sampleReviewCharacter(seedReferences[0]?.character ?? sourceCharacter);
     setIsSubmitting(true);
     beginTransition(`I’m generating "${nextLetterToReview}" for review now. Hang tight.`);
     setErrorMessage("");
@@ -1287,7 +1288,7 @@ export default function App() {
       if (!seedReferences[1]) {
         setSeedReferences(nextSeedReferences);
       }
-      const effectiveTargetCharacter = nextAlphabetCharacter(primarySeed.character);
+      const effectiveTargetCharacter = sampleReviewCharacter(primarySeed.character);
       const referenceForGeneration = primarySeed?.blob
         ? primarySeed.blob
         : previewImage
@@ -2122,6 +2123,18 @@ function nextAlphabetCharacter(character: string): string {
     return "A";
   }
   return String.fromCharCode(normalized.charCodeAt(0) + 1);
+}
+
+function alphabetCharacterOffset(character: string, steps: number): string {
+  let current = normalizeLetter(character);
+  for (let index = 0; index < Math.max(steps, 0); index += 1) {
+    current = nextAlphabetCharacter(current);
+  }
+  return current;
+}
+
+function sampleReviewCharacter(character: string): string {
+  return alphabetCharacterOffset(character, SAMPLE_REVIEW_CHARACTER_OFFSET);
 }
 
 function nextAlphabetCharacters(character: string, count: number): string[] {

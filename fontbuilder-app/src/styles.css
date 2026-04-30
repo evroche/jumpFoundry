@@ -696,7 +696,7 @@ textarea {
   left: 0;
   right: 0;
   bottom: 0;
-  gap: clamp(18px, 2.6vw, 34px);
+  gap: var(--session-toolbar-gap);
   background: transparent;
   z-index: 3;
 }
@@ -704,6 +704,18 @@ textarea {
 .session-font-preview-actions .session-icon-button,
 .session-font-preview-actions .session-submit-button {
   pointer-events: auto;
+}
+
+.session-font-preview-action-button {
+  position: relative;
+  z-index: 4;
+  transform-origin: center center;
+  transition: transform 120ms ease;
+  will-change: transform;
+}
+
+.session-font-preview-action-button:hover:not(:disabled) {
+  transform: scale(1.05);
 }
 
 .session-font-preview-textarea {

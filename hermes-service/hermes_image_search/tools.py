@@ -17,6 +17,7 @@ from .service.search import search_images as run_search
 BACKEND_BASE_URL = "http://127.0.0.1:8200"
 EXTRA_GLYPHS = ["\\", ".", "\""]
 SUPPORTED_GLYPHS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ") | set(EXTRA_GLYPHS)
+SAMPLE_REVIEW_CHARACTER_OFFSET = 8
 
 
 def search_images(args: dict, **kwargs) -> str:
@@ -113,6 +114,13 @@ def _next_alphabet_character(character: str) -> str:
     if normalized == "Z":
         return "A"
     return chr(ord(normalized) + 1)
+
+
+def _alphabet_character_offset(character: str, steps: int) -> str:
+    current = _normalize_letter(character, "A")
+    for _ in range(max(steps, 0)):
+        current = _next_alphabet_character(current)
+    return current
 
 
 def _data_url_to_bytes(data_url: str) -> bytes:
@@ -408,7 +416,7 @@ def generate_fontsketch_review_glyph(args: dict, **kwargs) -> str:
         "image_data_url": current_drawing,
     }
     source_character = _normalize_letter(primary_seed.get("character", session_payload.get("source_character", "E")))
-    target_character = _next_alphabet_character(source_character)
+    target_character = _alphabet_character_offset(source_character, SAMPLE_REVIEW_CHARACTER_OFFSET)
     _patch_session(
         session_id,
         {
