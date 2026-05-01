@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import subprocess
 import sys
@@ -18,6 +19,7 @@ BACKEND_BASE_URL = "http://127.0.0.1:8200"
 EXTRA_GLYPHS = ["\\", ".", "\""]
 SUPPORTED_GLYPHS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ") | set(EXTRA_GLYPHS)
 SAMPLE_REVIEW_CHARACTER_OFFSET = 8
+ALPHABET_BATCH_MAX_PARALLEL = 4
 
 
 def search_images(args: dict, **kwargs) -> str:
@@ -510,21 +512,40 @@ def generate_fontsketch_alphabet_batch(args: dict, **kwargs) -> str:
             "pending_revision_characters": [],
         },
     )
+
+    def generate_target(target_character: str) -> dict:
+        return _multipart_generate_request_with_retry(
+            session_id="",
+            primary_seed=primary_seed,
+            secondary_seed=secondary_seed,
+            source_character=_normalize_letter(primary_seed.get("character", "E")),
+            target_character=target_character,
+            correction="",
+            previous_run_id=latest_run_id,
+            brush_size=16,
+        )
+
     try:
-        items = [
-            _multipart_generate_request_with_retry(
-                session_id="",
-                primary_seed=primary_seed,
-                secondary_seed=secondary_seed,
-                source_character=_normalize_letter(primary_seed.get("character", "E")),
-                target_character=target_character,
-                correction="",
-                previous_run_id=latest_run_id,
-                brush_size=16,
-            )
-            for target_character in next_targets
-        ]
-    except urllib.error.URLError as exc:
+        items: list[dict | None] = [None] * len(next_targets)
+        errors: list[str] = []
+        max_workers = min(ALPHABET_BATCH_MAX_PARALLEL, max(1, len(next_targets)))
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="fontsketch-alphabet") as executor:
+            future_map = {
+                executor.submit(generate_target, target_character): (index, target_character)
+                for index, target_character in enumerate(next_targets)
+            }
+            for future in as_completed(future_map):
+                index, target_character = future_map[future]
+                try:
+                    items[index] = future.result()
+                except urllib.error.URLError as exc:
+                    errors.append(f"{target_character}: {exc}")
+                except Exception as exc:  # pragma: no cover - defensive guard
+                    errors.append(f"{target_character}: {exc}")
+
+        if errors or any(item is None for item in items):
+            raise RuntimeError("; ".join(errors) or "Alphabet generation did not complete successfully.")
+    except Exception as exc:
         _patch_session(
             session_id,
             {
@@ -537,7 +558,8 @@ def generate_fontsketch_alphabet_batch(args: dict, **kwargs) -> str:
         )
         return json.dumps({"error": f"Failed to generate Fontsketch alphabet batch: {exc}"})
 
-    batch_run_ids = [item.get("run_id", "") for item in items if item.get("run_id")]
+    completed_items = [item for item in items if item]
+    batch_run_ids = [item.get("run_id", "") for item in completed_items if item.get("run_id")]
     updated_session = _patch_session(
         session_id,
         {
