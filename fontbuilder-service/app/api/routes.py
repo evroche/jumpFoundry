@@ -339,7 +339,7 @@ async def export_outline_set(payload: GlyphOutlineExportRequest) -> StreamingRes
         build_outline_svg_zip,
         [item.model_dump() for item in payload.glyphs],
     )
-    filename = f"fontsketch-outline-set-{payload.session_id or 'export'}.zip"
+    filename = f"jumpfoundry-outline-set-{payload.session_id or 'export'}.zip"
     return StreamingResponse(
         io.BytesIO(archive_bytes),
         media_type="application/zip",
@@ -372,7 +372,7 @@ async def export_partial_font(payload: PartialFontExportRequest) -> StreamingRes
         payload.style_name,
         payload.weight_class,
     )
-    filename = f"{(payload.family_name.strip() or 'fontsketch').replace(' ', '-')}-{(payload.style_name.strip() or 'Regular').replace(' ', '-')}.ttf"
+    filename = f"{(payload.family_name.strip() or 'jumpfoundry').replace(' ', '-')}-{(payload.style_name.strip() or 'Regular').replace(' ', '-')}.ttf"
     return StreamingResponse(
         io.BytesIO(font_bytes),
         media_type="font/ttf",
@@ -396,7 +396,7 @@ async def export_font_package(payload: FontPackageExportRequest) -> StreamingRes
         ],
         payload.family_name,
     )
-    filename = f"{(payload.family_name.strip() or 'fontsketch').replace(' ', '-')}-package.zip"
+    filename = f"{(payload.family_name.strip() or 'jumpfoundry').replace(' ', '-')}-package.zip"
     return StreamingResponse(
         io.BytesIO(package_bytes),
         media_type="application/zip",

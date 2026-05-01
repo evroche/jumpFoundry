@@ -40,7 +40,7 @@ def main() -> int:
     print(f"Session ID: {payload['session_id']}")
     print(f"Open: {session_url}")
     print(
-        f"I've opened up Fontsketch in your browser:\n{session_url}\n\n"
+        f"I've opened up JumpFoundry in your browser:\n{session_url}\n\n"
         'Start by drawing two sample letters. I\'ll use them to build the rest of your font.\n\n'
         'Go ahead and draw the first letter "E". Let me know when you\'re done.'
     )

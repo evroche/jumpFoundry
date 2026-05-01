@@ -1409,7 +1409,7 @@ export default function App() {
       const nextSession = await updateSession(sessionId, {
         stage: "draw",
         status: "ready",
-        instruction: "I'm ready with Fontsketch. Start by drawing one letter, and I'll use it to help generate the rest of the typeface.",
+        instruction: "I'm ready with JumpFoundry. Start by drawing one letter, and I'll use it to help generate the rest of the typeface.",
         skeleton_image_data_url: "",
         selected_revision_characters: [],
       });
@@ -2285,7 +2285,7 @@ function previewWeightBrushSize(baseBrushSize: number, weightKey: PreviewWeightK
 }
 
 function previewFontFamilyForWeight(weightKey: PreviewWeightKey): string {
-  return `FontsketchPreview-${weightKey}`;
+  return `JumpFoundryPreview-${weightKey}`;
 }
 
 function clampRenderBrushSize(value: number): number {
@@ -2294,7 +2294,7 @@ function clampRenderBrushSize(value: number): number {
 
 function getExportFamilyName(fontName: string | undefined, sessionId: string): string {
   const normalized = (fontName ?? "").trim();
-  return normalized || `Fontsketch ${sessionId}`;
+  return normalized || `JumpFoundry ${sessionId}`;
 }
 
 function collectGlyphVectorSources(
@@ -2393,7 +2393,7 @@ function slugifyFontName(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  return normalized || "fontsketch-font";
+  return normalized || "jumpfoundry-font";
 }
 
 function isWorkingSessionStatus(status: string): boolean {

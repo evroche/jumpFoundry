@@ -55,7 +55,7 @@ class GlyphOutlineExportRequest(BaseModel):
 class PartialFontExportRequest(BaseModel):
     session_id: str = ""
     glyphs: list[GlyphOutlineExportItem]
-    family_name: str = "Fontsketch Test"
+    family_name: str = "JumpFoundry Test"
     style_name: str = "Regular"
     weight_class: int = 400
 
@@ -68,7 +68,7 @@ class FontPackageVariantRequest(BaseModel):
 
 class FontPackageExportRequest(BaseModel):
     session_id: str = ""
-    family_name: str = "Fontsketch Test"
+    family_name: str = "JumpFoundry Test"
     variants: list[FontPackageVariantRequest]
 
 

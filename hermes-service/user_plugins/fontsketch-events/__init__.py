@@ -33,7 +33,7 @@ def _build_injected_message(event_type: str, payload: dict) -> str:
         return message
 
     return (
-        f"Fontsketch event: {event_type}\n\n"
+        f"JumpFoundry event: {event_type}\n\n"
         f"Event payload:\n{json.dumps(payload, indent=2, sort_keys=True)}"
     )
 
@@ -129,10 +129,10 @@ def _start_server(ctx) -> None:
     def serve():
         try:
             server = ThreadingHTTPServer((HOST, PORT), Handler)
-            print(f"[fontsketch-events] listening on http://{HOST}:{PORT}{PATH}")
+            print(f"[jumpfoundry-events] listening on http://{HOST}:{PORT}{PATH}")
             server.serve_forever()
         except Exception as exc:
-            print(f"[fontsketch-events] failed to start server: {exc}")
+            print(f"[jumpfoundry-events] failed to start server: {exc}")
 
     threading.Thread(target=serve, daemon=True).start()
 

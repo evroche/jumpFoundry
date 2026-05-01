@@ -1,6 +1,6 @@
 name: fontsketch
 version: "0.1.0"
-description: Launch and support local Fontsketch font-creation sessions
+description: Launch and support local JumpFoundry font-creation sessions
 provides_tools:
   - start_fontsketch_session
   - get_fontsketch_session_status

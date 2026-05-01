@@ -19,7 +19,7 @@ TOP_PADDING = 24
 
 def build_font_package_zip(
     variants: list[dict[str, object]],
-    family_name: str = "Fontsketch Test",
+    family_name: str = "JumpFoundry Test",
 ) -> bytes:
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -39,7 +39,7 @@ def build_font_package_zip(
 
 def build_partial_ttf(
     glyphs: list[dict[str, str]],
-    family_name: str = "Fontsketch Test",
+    family_name: str = "JumpFoundry Test",
     style_name: str = "Regular",
     weight_class: int = 400,
 ) -> bytes:
@@ -144,4 +144,4 @@ def _advance_width(source_width: float, source_height: float) -> int:
 
 def _slugify_font_name(value: str) -> str:
     compact = "".join(character for character in value if character.isalnum())
-    return compact or "FontsketchTest"
+    return compact or "JumpFoundryTest"

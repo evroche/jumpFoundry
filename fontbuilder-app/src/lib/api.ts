@@ -527,7 +527,7 @@ export async function exportPartialFont(
     body: JSON.stringify({
       session_id: sessionId,
       glyphs,
-      family_name: options.familyName ?? "Fontsketch Test",
+      family_name: options.familyName ?? "JumpFoundry Test",
       style_name: options.styleName ?? "Regular",
       weight_class: options.weightClass ?? 400,
     }),

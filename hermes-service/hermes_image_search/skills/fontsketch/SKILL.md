@@ -1,14 +1,14 @@
 ---
 name: fontsketch
-description: Use when the user wants to create a font using Fontsketch, launch a new local font session, or open the Fontsketch drawing app from Hermes.
+description: Use when the user wants to create a font using JumpFoundry, launch a new local font session, or open the JumpFoundry drawing app from Hermes.
 metadata:
   hermes:
     requires_toolsets: [fontsketch]
 ---
 
-# Fontsketch
+# JumpFoundry
 
-When the user says they want to create a font using Fontsketch, start a new session with `start_fontsketch_session`.
+When the user says they want to create a font using JumpFoundry, start a new session with `start_fontsketch_session`.
 
 Default behavior:
 - use the local frontend at `http://127.0.0.1:5174`
@@ -23,7 +23,7 @@ After the tool returns:
 - do not say `I've started the font session.`
 - do not add `When you're done, tell me and I'll move to the next step.`
 
-When the user says "done", asks what to do next, asks for the next instruction, or asks what Hermes wants them to do in Fontsketch, first call `get_fontsketch_session_status`. Then choose the next tool based on the current stage:
+When the user says "done", asks what to do next, asks for the next instruction, or asks what Hermes wants them to do in JumpFoundry, first call `get_fontsketch_session_status`. Then choose the next tool based on the current stage:
 
 - If the session is on the first draw step for `E`, call `advance_fontsketch_session`.
 - If the session is on the second draw step and the user has finished drawing `S`, first tell the user `I'm now generating the first letter for you to review.` Then call `generate_review_glyph` immediately after that message.
@@ -31,9 +31,9 @@ When the user says "done", asks what to do next, asks for the next instruction, 
 - If the session is on the alphabet board and the user wants to continue without revisions, call `export_outline_svgs`, then `normalize_glyphs`.
 - If the session is waiting for a font name and the user provides one, call `set_font_name`, then `build_font_file` with that exact name.
 
-When restating Fontsketch instructions:
+When restating JumpFoundry instructions:
 - always use first person: "I" or "I'm"
-- never say "Fontsketch is", "Fontsketch will", or "Fontsketch can"
+- never say "JumpFoundry is", "JumpFoundry will", or "JumpFoundry can"
 - prefer phrasing like "I am generating...", "I am converting...", "I am trimming...", or "I am compiling..."
 - for long-running generation steps, send the short status message before you call the tool so the user sees it before the tool duration line
 - do not ask the user to describe what they see unless the session instruction explicitly asks for that
@@ -53,4 +53,4 @@ After `apply_revision` returns, tell them in first person that you are applying 
 
 Never tell the user "tell me what you think of those letters" on the alphabet board. Instead, instruct them to select the letters they want to revise and then message you once they have selected them.
 
-If the tool returns an error, explain that Fontsketch may not be running locally or may not yet have the required drawing state, and ask the user to make sure the local stack is running and the current step is fully drawn.
+If the tool returns an error, explain that JumpFoundry may not be running locally or may not yet have the required drawing state, and ask the user to make sure the local stack is running and the current step is fully drawn.

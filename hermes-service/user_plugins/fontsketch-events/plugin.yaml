@@ -1,5 +1,5 @@
 name: fontsketch-events
 version: "0.1.0"
-description: Receives Fontsketch UI events and injects them into the active Hermes CLI chat.
+description: Receives JumpFoundry UI events and injects them into the active Hermes CLI chat.
 provides_hooks:
   - on_session_start

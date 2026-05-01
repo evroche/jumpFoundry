@@ -50,7 +50,7 @@ def _sessions_dir() -> Path:
 def _read_full_session(requested_session_id: str = "") -> dict:
     sessions_dir = _sessions_dir()
     if not sessions_dir.exists():
-        return {"error": f"Fontsketch sessions directory not found at {sessions_dir}"}
+        return {"error": f"JumpFoundry sessions directory not found at {sessions_dir}"}
 
     session_path: Path | None = None
     if requested_session_id:
@@ -58,11 +58,11 @@ def _read_full_session(requested_session_id: str = "") -> dict:
         if candidate.exists():
             session_path = candidate
         else:
-            return {"error": f"Fontsketch session {requested_session_id} was not found."}
+            return {"error": f"JumpFoundry session {requested_session_id} was not found."}
     else:
         session_files = list(sessions_dir.glob("*.json"))
         if not session_files:
-            return {"error": "No local Fontsketch sessions were found."}
+            return {"error": "No local JumpFoundry sessions were found."}
         session_path = max(session_files, key=lambda path: path.stat().st_mtime)
 
     payload = json.loads(session_path.read_text(encoding="utf-8"))
@@ -276,7 +276,7 @@ def start_fontsketch_session(args: dict, **kwargs) -> str:
         / "start_font_session.py"
     )
     if not script_path.exists():
-        return json.dumps({"error": f"Fontsketch launcher not found at {script_path}"})
+        return json.dumps({"error": f"JumpFoundry launcher not found at {script_path}"})
 
     command = [
         sys.executable,
@@ -320,7 +320,7 @@ def start_fontsketch_session(args: dict, **kwargs) -> str:
 
     message = "\n".join(message_lines).strip()
     fallback_message = (
-        f"I've opened up Fontsketch in your browser:\n{frontend_url}\n\n"
+        f"I've opened up JumpFoundry in your browser:\n{frontend_url}\n\n"
         'Start by drawing two sample letters. I\'ll use them to build the rest of your font.\n\n'
         'Go ahead and draw the first letter "E". Let me know when you\'re done.'
         if frontend_url
@@ -372,7 +372,7 @@ def advance_fontsketch_session(args: dict, **kwargs) -> str:
         data=json.dumps(
             {
                 "status": "advance_requested",
-                "instruction": "I am moving Fontsketch to the next step now.",
+                "instruction": "I am moving JumpFoundry to the next step now.",
             }
         ).encode("utf-8"),
         headers={"Content-Type": "application/json"},
@@ -382,7 +382,7 @@ def advance_fontsketch_session(args: dict, **kwargs) -> str:
         with urllib.request.urlopen(request, timeout=10):
             pass
     except urllib.error.URLError as exc:
-        return json.dumps({"error": f"Failed to advance Fontsketch session: {exc}"})
+        return json.dumps({"error": f"Failed to advance JumpFoundry session: {exc}"})
 
     for _ in range(20):
         time.sleep(0.5)
@@ -396,7 +396,7 @@ def advance_fontsketch_session(args: dict, **kwargs) -> str:
         {
             "session_id": session_id,
             "status": "advance_requested",
-            "instruction": "I am moving Fontsketch to the next step now.",
+            "instruction": "I am moving JumpFoundry to the next step now.",
         }
     )
 
@@ -410,7 +410,7 @@ def generate_fontsketch_review_glyph(args: dict, **kwargs) -> str:
     seed_references = session_payload.get("seed_references", []) or []
     current_drawing = session_payload.get("current_drawing_image_data_url", "")
     if len(seed_references) < 1 or not current_drawing:
-        return json.dumps({"error": "Fontsketch needs the first seed and the current drawing before I can generate the review glyph."})
+        return json.dumps({"error": "JumpFoundry needs the first seed and the current drawing before I can generate the review glyph."})
 
     primary_seed = seed_references[0]
     secondary_seed = seed_references[1] if len(seed_references) > 1 else {
@@ -449,7 +449,7 @@ def generate_fontsketch_review_glyph(args: dict, **kwargs) -> str:
                 "selected_revision_characters": [],
             },
         )
-        return json.dumps({"error": f"Failed to generate Fontsketch review glyph: {exc}"})
+        return json.dumps({"error": f"Failed to generate JumpFoundry review glyph: {exc}"})
 
     _patch_session(
         session_id,
@@ -493,7 +493,7 @@ def generate_fontsketch_alphabet_batch(args: dict, **kwargs) -> str:
     seed_references = session_payload.get("seed_references", []) or []
     latest_run_id = (session_payload.get("latest_run_id") or "").strip()
     if len(seed_references) < 2 or not latest_run_id:
-        return json.dumps({"error": "Fontsketch needs both seed letters and an approved review glyph before I can generate the alphabet batch."})
+        return json.dumps({"error": "JumpFoundry needs both seed letters and an approved review glyph before I can generate the alphabet batch."})
 
     primary_seed = seed_references[0]
     secondary_seed = seed_references[1]
@@ -556,7 +556,7 @@ def generate_fontsketch_alphabet_batch(args: dict, **kwargs) -> str:
                 "pending_revision_characters": [],
             },
         )
-        return json.dumps({"error": f"Failed to generate Fontsketch alphabet batch: {exc}"})
+        return json.dumps({"error": f"Failed to generate JumpFoundry alphabet batch: {exc}"})
 
     completed_items = [item for item in items if item]
     batch_run_ids = [item.get("run_id", "") for item in completed_items if item.get("run_id")]
@@ -598,7 +598,7 @@ def export_fontsketch_outline_set(args: dict, **kwargs) -> str:
 
     glyphs = _session_export_glyphs(session_payload)
     if not glyphs:
-        return json.dumps({"error": "No Fontsketch glyphs are available to convert to SVG outlines yet."})
+        return json.dumps({"error": "No JumpFoundry glyphs are available to convert to SVG outlines yet."})
 
     session_id = session_payload["session_id"]
     _patch_session(
@@ -616,7 +616,7 @@ def export_fontsketch_outline_set(args: dict, **kwargs) -> str:
             timeout=120.0,
         )
     except urllib.error.URLError as exc:
-        return json.dumps({"error": f"Failed to export Fontsketch outline set: {exc}"})
+        return json.dumps({"error": f"Failed to export JumpFoundry outline set: {exc}"})
 
     updated_session = _patch_session(
         session_id,
@@ -643,7 +643,7 @@ def normalize_fontsketch_glyphs(args: dict, **kwargs) -> str:
 
     glyphs = _session_export_glyphs(session_payload)
     if not glyphs:
-        return json.dumps({"error": "No Fontsketch glyphs are available to normalize yet."})
+        return json.dumps({"error": "No JumpFoundry glyphs are available to normalize yet."})
 
     session_id = session_payload["session_id"]
     _patch_session(
@@ -662,7 +662,7 @@ def normalize_fontsketch_glyphs(args: dict, **kwargs) -> str:
             timeout=120.0,
         )
     except urllib.error.URLError as exc:
-        return json.dumps({"error": f"Failed to normalize Fontsketch glyphs: {exc}"})
+        return json.dumps({"error": f"Failed to normalize JumpFoundry glyphs: {exc}"})
 
     updated_session = _patch_session(
         session_id,
@@ -696,7 +696,7 @@ def submit_fontsketch_revision(args: dict, **kwargs) -> str:
     target_letters = session_payload.get("selected_revision_characters", []) or [session_payload.get("target_character", "")]
     seed_references = session_payload.get("seed_references", []) or []
     if len(seed_references) < 2:
-        return json.dumps({"error": "Fontsketch needs both seed letters before I can apply that revision."})
+        return json.dumps({"error": "JumpFoundry needs both seed letters before I can apply that revision."})
 
     normalized_targets = [_normalize_letter(letter, "") for letter in target_letters if letter]
     pending_targets = [_normalize_letter(letter, "") for letter in (session_payload.get("pending_revision_characters") or []) if letter]
@@ -727,7 +727,7 @@ def submit_fontsketch_revision(args: dict, **kwargs) -> str:
                 },
             )
         except urllib.error.URLError as exc:
-            return json.dumps({"error": f"Failed to update Fontsketch session: {exc}"})
+            return json.dumps({"error": f"Failed to update JumpFoundry session: {exc}"})
 
     primary_seed = seed_references[0]
     secondary_seed = seed_references[1]
@@ -792,7 +792,7 @@ def submit_fontsketch_revision(args: dict, **kwargs) -> str:
                     "selected_revision_characters": [],
                 },
             )
-        return json.dumps({"error": f"Failed to apply Fontsketch revision: {exc}"})
+        return json.dumps({"error": f"Failed to apply JumpFoundry revision: {exc}"})
 
     return json.dumps(
         {
@@ -824,7 +824,7 @@ def set_fontsketch_font_name(args: dict, **kwargs) -> str:
             },
         )
     except urllib.error.URLError as exc:
-        return json.dumps({"error": f"Failed to save Fontsketch font name: {exc}"})
+        return json.dumps({"error": f"Failed to save JumpFoundry font name: {exc}"})
 
     return json.dumps(
         {
@@ -848,7 +848,7 @@ def build_fontsketch_font(args: dict, **kwargs) -> str:
     session_id = session_payload["session_id"]
     glyphs = session_payload.get("normalized_glyphs", []) or _session_export_glyphs(session_payload)
     if not glyphs:
-        return json.dumps({"error": "No normalized Fontsketch glyphs are available to build the font yet."})
+        return json.dumps({"error": "No normalized JumpFoundry glyphs are available to build the font yet."})
 
     _patch_session(
         session_id,
@@ -865,7 +865,7 @@ def build_fontsketch_font(args: dict, **kwargs) -> str:
             timeout=120.0,
         )
     except urllib.error.URLError as exc:
-        return json.dumps({"error": f"Failed to build the Fontsketch font: {exc}"})
+        return json.dumps({"error": f"Failed to build the JumpFoundry font: {exc}"})
 
     font_data_url = f"data:font/ttf;base64,{base64.b64encode(font_bytes).decode('ascii')}"
     updated_payload = _patch_session(
