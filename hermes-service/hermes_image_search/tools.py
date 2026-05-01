@@ -16,7 +16,9 @@ from .service.search import search_images as run_search
 
 
 BACKEND_BASE_URL = "http://127.0.0.1:8200"
-EXTRA_GLYPHS = ["\\", ".", "\""]
+AI_GENERATED_EXTRA_GLYPHS = ["\\"]
+DETERMINISTIC_PUNCTUATION_GLYPHS = [".", ",", "'", "\"", "*"]
+EXTRA_GLYPHS = [*AI_GENERATED_EXTRA_GLYPHS, *DETERMINISTIC_PUNCTUATION_GLYPHS]
 SUPPORTED_GLYPHS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ") | set(EXTRA_GLYPHS)
 SAMPLE_REVIEW_CHARACTER_OFFSET = 8
 ALPHABET_BATCH_MAX_PARALLEL = 4
@@ -502,7 +504,7 @@ def generate_fontsketch_alphabet_batch(args: dict, **kwargs) -> str:
     next_targets = [_next_alphabet_character(approved_character)]
     next_targets.append(_next_alphabet_character(next_targets[-1]))
     next_targets.append(_next_alphabet_character(next_targets[-1]))
-    next_targets.extend(EXTRA_GLYPHS)
+    next_targets.extend(AI_GENERATED_EXTRA_GLYPHS)
     _patch_session(
         session_id,
         {

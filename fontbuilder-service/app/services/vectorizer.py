@@ -22,6 +22,7 @@ def vectorize_centerline_and_render(
     *,
     brush_size: int,
     output_size: int = 1024,
+    crop_final_render_to_bounds: bool = True,
 ) -> tuple[str, str]:
     image = _prepare_grayscale_image(image_bytes)
     image = image.resize((output_size, output_size))
@@ -32,7 +33,12 @@ def vectorize_centerline_and_render(
     simplified = _cap_polyline_complexity(simplified)
 
     vector_data_url = _vector_svg_data_url(simplified, output_size)
-    final_data_url = _render_final_png_data_url(simplified, output_size, brush_size)
+    final_data_url = _render_final_png_data_url(
+        simplified,
+        output_size,
+        brush_size,
+        crop_to_bounds=crop_final_render_to_bounds,
+    )
     return vector_data_url, final_data_url
 
 
@@ -270,7 +276,13 @@ def _vector_svg_data_url(polylines: list[list[Point]], size: int) -> str:
     return data_url
 
 
-def _render_final_png_data_url(polylines: list[list[Point]], size: int, brush_size: int) -> str:
+def _render_final_png_data_url(
+    polylines: list[list[Point]],
+    size: int,
+    brush_size: int,
+    *,
+    crop_to_bounds: bool = True,
+) -> str:
     oversample = 4
     render_size = size * oversample
     image = Image.new("RGBA", (render_size, render_size), (0, 0, 0, 0))
@@ -303,7 +315,8 @@ def _render_final_png_data_url(polylines: list[list[Point]], size: int, brush_si
             draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=(17, 17, 17, 255))
 
     image = image.resize((size, size), Image.Resampling.LANCZOS)
-    image = _crop_transparent_image(image, padding=max(8, round(size * 0.03)))
+    if crop_to_bounds:
+        image = _crop_transparent_image(image, padding=max(8, round(size * 0.03)))
 
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")

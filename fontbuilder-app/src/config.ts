@@ -1,5 +1,5 @@
 export const appConfig = {
-  sessionAccentColor: "#ff3b3f",
+  sessionAccentColor: "#ff3b3f", // FFEC6B yellow, 2F55FF blue, ff3b3f orange
   silentMode: false,
 } as const;
 

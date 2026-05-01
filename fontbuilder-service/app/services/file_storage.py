@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from app.core.config import get_settings
 
-EXTRA_GLYPHS = {"\\", ".", "\""}
+EXTRA_GLYPHS = {"\\", ".", ",", "'", "\"", "*"}
 SUPPORTED_GLYPHS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ") | EXTRA_GLYPHS
 
 

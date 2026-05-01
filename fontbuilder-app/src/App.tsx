@@ -16,6 +16,7 @@ import undoIcon from "./assets/material-icons/undoCOMPACT.svg";
 import {
   exportPartialFont,
   exportFontPackage,
+  fetchPunctuationGlyphs,
   fetchRun,
   fetchSession,
   normalizeGlyphSet,
@@ -29,6 +30,7 @@ import {
   type BatchResponse,
   type FontVariantExportItem,
   type GlyphOutlineExportItem,
+  type PunctuationGlyphPreviewItem,
   type RunResponse,
   type SkeletonPreviewResponse,
   type SessionResponse,
@@ -50,7 +52,9 @@ const FIRST_SEED_CHARACTER = "E";
 const SECOND_SEED_CHARACTER = "S";
 const SAMPLE_REVIEW_CHARACTER_OFFSET = 8;
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-const EXTRA_GLYPHS = ["\\", ".", "\""] as const;
+const AI_GENERATED_EXTRA_GLYPHS = ["\\"] as const;
+const DETERMINISTIC_PUNCTUATION_GLYPHS = [".", ",", "'", "\"", "*"] as const;
+const EXTRA_GLYPHS = [...AI_GENERATED_EXTRA_GLYPHS, ...DETERMINISTIC_PUNCTUATION_GLYPHS] as const;
 const GLYPH_GRID_ORDER = [...ALPHABET, ...EXTRA_GLYPHS];
 
 type PreviewWeightKey = "light" | "regular" | "medium" | "bold";
@@ -61,10 +65,10 @@ const PREVIEW_WEIGHT_DEFINITIONS: Array<{
   weightClass: number;
   brushOffsetSteps: number;
 }> = [
-  { key: "light", label: "300", weightClass: 300, brushOffsetSteps: -2 },
-  { key: "regular", label: "400", weightClass: 400, brushOffsetSteps: -1 },
+  { key: "light", label: "300", weightClass: 300, brushOffsetSteps: -4 },
+  { key: "regular", label: "400", weightClass: 400, brushOffsetSteps: -2 },
   { key: "medium", label: "600", weightClass: 600, brushOffsetSteps: 0 },
-  { key: "bold", label: "700", weightClass: 700, brushOffsetSteps: 2 },
+  { key: "bold", label: "700", weightClass: 700, brushOffsetSteps: 4 },
 ];
 
 type SeedReference = {
@@ -104,7 +108,7 @@ export default function App() {
   const [loadingMessage, setLoadingMessage] = useState("");
   const [pendingHermesConfirm, setPendingHermesConfirm] = useState<PendingHermesConfirm | null>(null);
   const [postBatchStage, setPostBatchStage] = useState<"grid" | "preview">("grid");
-  const [previewText, setPreviewText] = useState("the quick brown fox jumped over the lazy dog");
+  const [previewText, setPreviewText] = useState("the quick brown fox jumps over the lazy dog");
   const [previewFontSizeOffset, setPreviewFontSizeOffset] = useState(0);
   const [previewFontBlob, setPreviewFontBlob] = useState<Blob | null>(null);
   const [previewFontBlobs, setPreviewFontBlobs] = useState<Partial<Record<PreviewWeightKey, Blob>>>({});
@@ -117,6 +121,7 @@ export default function App() {
   const [normalizedExportGlyphs, setNormalizedExportGlyphs] = useState<GlyphOutlineExportItem[]>([]);
   const [seedVectorImages, setSeedVectorImages] = useState<Record<string, string>>({});
   const [seedFinalRenderImages, setSeedFinalRenderImages] = useState<Record<string, string>>({});
+  const [builtinPunctuationGlyphs, setBuiltinPunctuationGlyphs] = useState<Record<string, PunctuationGlyphPreviewItem>>({});
   const [brushSize, setBrushSize] = useState(16);
   const [batchRenderBrushSize, setBatchRenderBrushSize] = useState(16);
   const [batchAdjustedFinalImages, setBatchAdjustedFinalImages] = useState<Record<string, string>>({});
@@ -193,15 +198,22 @@ export default function App() {
       item.interpreted_vector_data_url,
     ]),
   );
+  const builtinPunctuationVectorSignature = JSON.stringify(
+    Object.values(builtinPunctuationGlyphs)
+      .map((item) => [normalizeLetter(item.character), item.interpreted_vector_data_url])
+      .sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
+  );
   const seedVectorSignature = JSON.stringify(seedVectorImages);
   const batchAdjustedFinalImagesSignature = JSON.stringify(batchAdjustedFinalImages);
   const normalizedGlyphMap = new Map(
     normalizedExportGlyphs.map((glyph) => [normalizeLetter(glyph.character), glyph.image_data_url]),
   );
+  const previewDownloadName = getPreviewPackageFilename(session?.font_name, sessionId);
   const batchGridItems = GLYPH_GRID_ORDER.map((character) => {
     const normalizedCharacter = normalizeLetter(character);
     const normalizedImageUrl = normalizedGlyphMap.get(normalizedCharacter) ?? "";
     const isPending = pendingBatchLetters.includes(normalizedCharacter);
+    const builtinPunctuation = builtinPunctuationGlyphs[normalizedCharacter];
     const seedReference = seedReferences.find((reference) => normalizeLetter(reference.character) === normalizedCharacter);
     const generatedItem = batchItems.find((item) => normalizeLetter(item.target_character) === normalizedCharacter);
     if (normalizedImageUrl) {
@@ -209,6 +221,15 @@ export default function App() {
         key: `normalized-${normalizedCharacter}`,
         character: normalizedCharacter,
         imageUrl: normalizedImageUrl,
+        alt: normalizedCharacter,
+        isPending,
+      };
+    }
+    if (builtinPunctuation) {
+      return {
+        key: `builtin-${normalizedCharacter}`,
+        character: normalizedCharacter,
+        imageUrl: builtinPunctuation.image_data_url,
         alt: normalizedCharacter,
         isPending,
       };
@@ -242,8 +263,21 @@ export default function App() {
   const batchFinalGridItems = GLYPH_GRID_ORDER.map((character) => {
     const normalizedCharacter = normalizeLetter(character);
     const isPending = pendingBatchLetters.includes(normalizedCharacter);
+    const builtinPunctuation = builtinPunctuationGlyphs[normalizedCharacter];
     const seedReference = seedReferences.find((reference) => normalizeLetter(reference.character) === normalizedCharacter);
     const generatedItem = batchItems.find((item) => normalizeLetter(item.target_character) === normalizedCharacter);
+    if (builtinPunctuation) {
+      return {
+        key: `builtin-final-${normalizedCharacter}`,
+        character: normalizedCharacter,
+        imageUrl:
+          batchAdjustedFinalImages[normalizedCharacter]
+          || builtinPunctuation.final_render_data_url
+          || builtinPunctuation.image_data_url,
+        alt: `${normalizedCharacter} final render`,
+        isPending,
+      };
+    }
     if (generatedItem) {
       return {
         key: `${generatedItem.run_id}-final`,
@@ -279,8 +313,21 @@ export default function App() {
   const batchVectorGridItems = GLYPH_GRID_ORDER.map((character) => {
     const normalizedCharacter = normalizeLetter(character);
     const isPending = pendingBatchLetters.includes(normalizedCharacter);
+    const builtinPunctuation = builtinPunctuationGlyphs[normalizedCharacter];
     const seedReference = seedReferences.find((reference) => normalizeLetter(reference.character) === normalizedCharacter);
     const generatedItem = batchItems.find((item) => normalizeLetter(item.target_character) === normalizedCharacter);
+    if (builtinPunctuation) {
+      return {
+        key: `builtin-vector-${normalizedCharacter}`,
+        character: normalizedCharacter,
+        imageUrl:
+          builtinPunctuation.interpreted_vector_data_url
+            ? sanitizeVectorSvgDataUrl(builtinPunctuation.interpreted_vector_data_url)
+            : builtinPunctuation.image_data_url,
+        alt: `${normalizedCharacter} vector trace`,
+        isPending,
+      };
+    }
     if (generatedItem) {
       return {
         key: `${generatedItem.run_id}-vector`,
@@ -724,6 +771,36 @@ export default function App() {
   }, [session?.batch_run_ids, sessionBatchRunIdsSignature, hydratedBatchRunIdsSignature, session?.backend_version, session?.latest_run_id, session?.source_character, result?.target_character]);
 
   useEffect(() => {
+    if (!sessionId) {
+      setBuiltinPunctuationGlyphs({});
+      return;
+    }
+
+    let cancelled = false;
+    void fetchPunctuationGlyphs()
+      .then((payload) => {
+        if (cancelled) {
+          return;
+        }
+        setBuiltinPunctuationGlyphs(
+          Object.fromEntries(
+            payload.items.map((item) => [normalizeLetter(item.character), item]),
+          ),
+        );
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setBuiltinPunctuationGlyphs({});
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
     const nextPendingLetters = (
       session?.pending_revision_characters?.length
         ? session.pending_revision_characters
@@ -925,13 +1002,22 @@ export default function App() {
           return;
         }
         const sanitizedVector = sanitizeVectorSvgDataUrl(artifacts.vectorImageDataUrl);
-        setInterpretedVectorImage(sanitizedVector);
+        const parsedVectorTrace = parseVectorSvgDataUrl(sanitizedVector);
+        setInterpretedVectorImage(parsedVectorTrace ? sanitizedVector : "");
+        if (!parsedVectorTrace) {
+          setFinalRenderImage(result.generated_image_data_url);
+          return;
+        }
         void buildReviewDisplayFinalImage(sanitizedVector, activeBrushSize, activeCanvasSize)
           .then((displayFinalImage) => {
             if (!isActive) {
               return;
             }
-            setFinalRenderImage(displayFinalImage || artifacts.finalImageDataUrl);
+            setFinalRenderImage(
+              displayFinalImage
+              || artifacts.finalImageDataUrl
+              || result.generated_image_data_url,
+            );
           });
       })
       .catch((error) => {
@@ -940,7 +1026,7 @@ export default function App() {
         }
         setErrorMessage(error instanceof Error ? error.message : "Failed to prepare review artifacts");
         setInterpretedVectorImage("");
-        setFinalRenderImage("");
+        setFinalRenderImage(result.generated_image_data_url);
       })
       .finally(() => {
         if (isActive) {
@@ -1013,18 +1099,13 @@ export default function App() {
       return;
     }
 
-    const vectorSources = new Map<string, string>();
-    for (const item of batchItems) {
-      const character = normalizeLetter(item.target_character);
-      if (item.interpreted_vector_data_url) {
-        vectorSources.set(character, sanitizeVectorSvgDataUrl(item.interpreted_vector_data_url));
-      }
-    }
-    for (const [character, dataUrl] of Object.entries(seedVectorImages)) {
-      if (dataUrl) {
-        vectorSources.set(normalizeLetter(character), sanitizeVectorSvgDataUrl(dataUrl));
-      }
-    }
+    const vectorSources = collectGlyphVectorSources(
+      result,
+      batchResult,
+      seedVectorImages,
+      interpretedVectorImage,
+      builtinPunctuationGlyphs,
+    );
 
     if (vectorSources.size === 0) {
       setBatchAdjustedFinalImages({});
@@ -1038,7 +1119,12 @@ export default function App() {
         if (!trace) {
           return [character, ""] as const;
         }
-        const finalImageDataUrl = await renderBrushPreview(trace, batchRenderBrushSize, SESSION_CANVAS_SIZE);
+        const finalImageDataUrl = await renderBrushPreview(
+          trace,
+          batchRenderBrushSize,
+          SESSION_CANVAS_SIZE,
+          !DETERMINISTIC_PUNCTUATION_GLYPHS.includes(character as typeof DETERMINISTIC_PUNCTUATION_GLYPHS[number]),
+        );
         return [character, finalImageDataUrl] as const;
       }),
     )
@@ -1060,7 +1146,7 @@ export default function App() {
     return () => {
       isActive = false;
     };
-  }, [batchResult, batchVectorSourceSignature, seedVectorSignature, batchRenderBrushSize]);
+  }, [batchResult, batchVectorSourceSignature, seedVectorSignature, builtinPunctuationVectorSignature, batchRenderBrushSize, result, interpretedVectorImage, builtinPunctuationGlyphs]);
 
   useEffect(() => {
     if (!sessionId || !result || !batchResult || seedReferences.length < 2) {
@@ -1071,7 +1157,13 @@ export default function App() {
     let isActive = true;
     void (async () => {
       try {
-        const glyphs = await buildExportGlyphs(seedReferences, result, batchResult, batchAdjustedFinalImages);
+        const glyphs = await buildExportGlyphs(
+          seedReferences,
+          result,
+          batchResult,
+          batchAdjustedFinalImages,
+          builtinPunctuationGlyphs,
+        );
         const normalized = await normalizeGlyphSet(sessionId, glyphs);
         if (!isActive) {
           return;
@@ -1088,7 +1180,7 @@ export default function App() {
     return () => {
       isActive = false;
     };
-  }, [sessionId, seedReferences, result, batchResult, batchAdjustedFinalImagesSignature]);
+  }, [sessionId, seedReferences, result, batchResult, batchAdjustedFinalImagesSignature, builtinPunctuationVectorSignature]);
 
   useEffect(() => {
     if (!sessionId || !batchResult) {
@@ -1453,7 +1545,7 @@ export default function App() {
 
     try {
       const approvedCharacter = result.target_character;
-      const nextTargets = [...nextAlphabetCharacters(approvedCharacter, 3), ...EXTRA_GLYPHS];
+      const nextTargets = [...nextAlphabetCharacters(approvedCharacter, 3), ...AI_GENERATED_EXTRA_GLYPHS];
       const items: RunResponse[] = [];
       const primarySeed = seedReferences[0];
       const secondarySeed = seedReferences[1];
@@ -1561,7 +1653,7 @@ export default function App() {
         : (await preparePreviewFontAssets()).variants;
       const packageBlob = previewFontPackageBlob ?? await exportFontPackage(sessionId, familyName, variants);
       setPreviewFontPackageBlob(packageBlob);
-      const downloadName = `${slugifyFontName(familyName)}-package.zip`;
+      const downloadName = getPreviewPackageFilename(session?.font_name, sessionId);
       downloadBlob(packageBlob, downloadName);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Unknown error");
@@ -1650,6 +1742,19 @@ export default function App() {
         : Math.max(0, currentIndex - 1);
       return PREVIEW_WEIGHT_DEFINITIONS[nextIndex]?.key ?? current;
     });
+  }
+
+  async function ensureBuiltinPunctuationGlyphs(): Promise<Record<string, PunctuationGlyphPreviewItem>> {
+    if (Object.keys(builtinPunctuationGlyphs).length >= DETERMINISTIC_PUNCTUATION_GLYPHS.length) {
+      return builtinPunctuationGlyphs;
+    }
+
+    const payload = await fetchPunctuationGlyphs();
+    const glyphMap = Object.fromEntries(
+      payload.items.map((item) => [normalizeLetter(item.character), item]),
+    );
+    setBuiltinPunctuationGlyphs(glyphMap);
+    return glyphMap;
   }
 
   function postDrawConfirmedEvent() {
@@ -1742,11 +1847,13 @@ export default function App() {
     void (async () => {
       try {
         if (result && batchResult && seedReferences.length >= 2) {
+          const punctuationGlyphs = await ensureBuiltinPunctuationGlyphs();
           const exportGlyphOverrides = await buildExportGlyphs(
             seedReferences,
             result,
             batchResult,
             batchAdjustedFinalImages,
+            punctuationGlyphs,
           );
           await updateSession(sessionId, {
             export_glyph_overrides: exportGlyphOverrides,
@@ -1797,8 +1904,15 @@ export default function App() {
       throw new Error("Generate the glyph set first so the preview can prepare all weights.");
     }
 
+    const punctuationGlyphs = await ensureBuiltinPunctuationGlyphs();
     const familyName = getExportFamilyName(session?.font_name, sessionId);
-    const vectorSources = collectGlyphVectorSources(result, batchResult, seedVectorImages, interpretedVectorImage);
+    const vectorSources = collectGlyphVectorSources(
+      result,
+      batchResult,
+      seedVectorImages,
+      interpretedVectorImage,
+      punctuationGlyphs,
+    );
     if (vectorSources.size === 0) {
       throw new Error("The preview weights need vector traces before the font package can be prepared.");
     }
@@ -1814,6 +1928,7 @@ export default function App() {
           result,
           batchResult,
           glyphOverrides,
+          punctuationGlyphs,
         );
         return {
           key: definition.key,
@@ -1977,7 +2092,22 @@ export default function App() {
                         </button>
                       </div>
                     </div>
-                    <span className="session-controls-separator" aria-hidden="true" />
+                    <button
+                      type="button"
+                      className="session-font-download-chip session-font-preview-action-button"
+                      onClick={handleExportPartialFont}
+                      aria-label="Download Font"
+                    >
+                      <span className="session-font-download-chip-label">{previewDownloadName}</span>
+                      <span
+                        className="session-font-download-chip-icon"
+                        aria-hidden="true"
+                        style={{
+                          WebkitMaskImage: `url(${downloadIcon})`,
+                          maskImage: `url(${downloadIcon})`,
+                        }}
+                      />
+                    </button>
                     <button
                       type="button"
                       className="session-icon-button session-font-preview-action-button"
@@ -1993,15 +2123,6 @@ export default function App() {
                       aria-label="Bigger"
                     >
                       <img src={biggerIcon} alt="" className="session-icon-image" />
-                    </button>
-                    <span className="session-controls-separator" aria-hidden="true" />
-                    <button
-                      type="button"
-                      className="session-submit-button session-review-approve-button session-font-preview-action-button"
-                      onClick={handleExportPartialFont}
-                      aria-label="Download Font"
-                    >
-                      <img src={downloadIcon} alt="" className="session-submit-icon" />
                     </button>
                   </div>
                 </div>
@@ -2292,17 +2413,24 @@ function getExportFamilyName(fontName: string | undefined, sessionId: string): s
   return normalized || `JumpFoundry ${sessionId}`;
 }
 
+function getPreviewPackageFilename(fontName: string | undefined, sessionId: string): string {
+  return `${slugifyFontName(getExportFamilyName(fontName, sessionId))}-package.zip`;
+}
+
 function collectGlyphVectorSources(
-  result: RunResponse,
+  result: RunResponse | null,
   batchResult: BatchResponse,
   seedVectorImages: Record<string, string>,
   reviewVectorImage: string,
+  builtinPunctuationGlyphs: Record<string, PunctuationGlyphPreviewItem> = {},
 ): Map<string, string> {
   const vectorSources = new Map<string, string>();
-  const reviewCharacter = normalizeLetter(result.target_character);
-  const reviewVectorSource = reviewVectorImage || result.interpreted_vector_data_url;
-  if (reviewVectorSource) {
-    vectorSources.set(reviewCharacter, sanitizeVectorSvgDataUrl(reviewVectorSource));
+  if (result) {
+    const reviewCharacter = normalizeLetter(result.target_character);
+    const reviewVectorSource = reviewVectorImage || result.interpreted_vector_data_url;
+    if (reviewVectorSource) {
+      vectorSources.set(reviewCharacter, sanitizeVectorSvgDataUrl(reviewVectorSource));
+    }
   }
   for (const item of batchResult.items) {
     const character = normalizeLetter(item.target_character);
@@ -2313,6 +2441,14 @@ function collectGlyphVectorSources(
   for (const [character, dataUrl] of Object.entries(seedVectorImages)) {
     if (dataUrl) {
       vectorSources.set(normalizeLetter(character), sanitizeVectorSvgDataUrl(dataUrl));
+    }
+  }
+  for (const item of Object.values(builtinPunctuationGlyphs)) {
+    if (item.interpreted_vector_data_url) {
+      vectorSources.set(
+        normalizeLetter(item.character),
+        sanitizeVectorSvgDataUrl(item.interpreted_vector_data_url),
+      );
     }
   }
   return vectorSources;
@@ -2404,10 +2540,18 @@ function isWorkingSessionStatus(status: string): boolean {
 }
 
 function dataUrlToBlob(dataUrl: string): Blob {
-  const [header, encoded] = dataUrl.split(",", 2);
-  const mimeMatch = header.match(/^data:(.*?);base64$/);
+  const commaIndex = dataUrl.indexOf(",");
+  if (commaIndex < 0) {
+    throw new Error("Invalid data URL");
+  }
+
+  const header = dataUrl.slice(0, commaIndex);
+  const payload = dataUrl.slice(commaIndex + 1);
+  const mimeMatch = header.match(/^data:(.*?)(;base64)?$/);
   const mimeType = mimeMatch?.[1] ?? "application/octet-stream";
-  const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+  const bytes = header.includes(";base64")
+    ? Uint8Array.from(atob(payload), (character) => character.charCodeAt(0))
+    : new TextEncoder().encode(decodeURIComponent(payload));
   return new Blob([bytes], { type: mimeType });
 }
 
@@ -2443,6 +2587,7 @@ async function buildExportGlyphs(
   result: RunResponse,
   batchResult: BatchResponse,
   finalGlyphImageOverrides: Record<string, string> = {},
+  builtinPunctuationGlyphs: Record<string, PunctuationGlyphPreviewItem> = {},
 ): Promise<GlyphOutlineExportItem[]> {
   const normalizedSeeds = await Promise.all(
     seedReferences.map(async (reference) => {
@@ -2465,6 +2610,11 @@ async function buildExportGlyphs(
       image_data_url:
         finalGlyphImageOverrides[normalizeLetter(item.target_character)] || item.generated_image_data_url,
     })),
+    ...Object.values(builtinPunctuationGlyphs).map((item) => ({
+      character: normalizeLetter(item.character),
+      image_data_url:
+        finalGlyphImageOverrides[normalizeLetter(item.character)] || item.image_data_url,
+    })),
   ];
   const dedupedGlyphs = new Map<string, GlyphOutlineExportItem>();
   for (const glyph of glyphs) {
@@ -2485,10 +2635,18 @@ async function buildPreviewFontBlob(
   batchResult: BatchResponse,
   normalizedGlyphs: GlyphOutlineExportItem[],
   finalGlyphImageOverrides: Record<string, string> = {},
+  builtinPunctuationGlyphs: Record<string, PunctuationGlyphPreviewItem> = {},
 ): Promise<Blob> {
   const glyphs = normalizedGlyphs.length > 0
     ? normalizedGlyphs
-    : await buildNormalizedExportGlyphs(sessionId, seedReferences, result, batchResult, finalGlyphImageOverrides);
+    : await buildNormalizedExportGlyphs(
+        sessionId,
+        seedReferences,
+        result,
+        batchResult,
+        finalGlyphImageOverrides,
+        builtinPunctuationGlyphs,
+      );
   return exportPartialFont(sessionId, glyphs);
 }
 
@@ -2498,8 +2656,15 @@ async function buildNormalizedExportGlyphs(
   result: RunResponse,
   batchResult: BatchResponse,
   finalGlyphImageOverrides: Record<string, string> = {},
+  builtinPunctuationGlyphs: Record<string, PunctuationGlyphPreviewItem> = {},
 ): Promise<GlyphOutlineExportItem[]> {
-  const glyphs = await buildExportGlyphs(seedReferences, result, batchResult, finalGlyphImageOverrides);
+  const glyphs = await buildExportGlyphs(
+    seedReferences,
+    result,
+    batchResult,
+    finalGlyphImageOverrides,
+    builtinPunctuationGlyphs,
+  );
   const normalized = await normalizeGlyphSet(sessionId, glyphs);
   return normalized.glyphs;
 }

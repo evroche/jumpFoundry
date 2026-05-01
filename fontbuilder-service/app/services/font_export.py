@@ -15,6 +15,8 @@ ASCENT = 824
 DESCENT = -200
 SIDE_BEARING = 36
 TOP_PADDING = 24
+DETERMINISTIC_PUNCTUATION_GLYPHS = {".", ",", "'", "\"", "*"}
+FULL_FRAME_GLYPH_HEIGHT = 1024
 
 
 def build_font_package_zip(
@@ -55,7 +57,10 @@ def build_partial_ttf(
     for character, image_data_url in ordered_items:
         image_bytes, _ = decode_data_url(image_data_url)
         loops = raster_to_outline_loops(image_bytes)
-        normalized_loops, width, height = normalize_outline_loops(loops)
+        if character in DETERMINISTIC_PUNCTUATION_GLYPHS:
+            normalized_loops, width, height = normalize_outline_loops_preserve_vertical_frame(loops)
+        else:
+            normalized_loops, width, height = normalize_outline_loops(loops)
         glyph_map[character] = _build_outline_glyph(normalized_loops, width, height)
         metrics[character] = (_advance_width(width, height), 0)
         cmap[ord(character)] = character
@@ -140,6 +145,24 @@ def _advance_width(source_width: float, source_height: float) -> int:
     drawable_height = ASCENT - TOP_PADDING
     scale = drawable_height / max(source_height, 1.0)
     return max(240, int(round(SIDE_BEARING * 2 + source_width * scale)))
+
+
+def normalize_outline_loops_preserve_vertical_frame(
+    loops: list[list[tuple[float, float]]],
+    source_height: float = FULL_FRAME_GLYPH_HEIGHT,
+) -> tuple[list[list[tuple[float, float]]], float, float]:
+    if not loops:
+        return [], 0.0, source_height
+
+    all_points = [point for loop in loops for point in loop]
+    min_x = min(point[0] for point in all_points)
+    max_x = max(point[0] for point in all_points)
+    normalized = [
+        [(x - min_x, y) for x, y in loop]
+        for loop in loops
+    ]
+    width = max_x - min_x
+    return normalized, width, source_height
 
 
 def _slugify_font_name(value: str) -> str:

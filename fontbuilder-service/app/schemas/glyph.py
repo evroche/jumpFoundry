@@ -84,6 +84,18 @@ class GlyphVectorizationResponse(BaseModel):
     final_render_data_url: str
 
 
+class PunctuationGlyphPreviewItem(BaseModel):
+    character: str
+    image_data_url: str
+    interpreted_vector_data_url: str
+    final_render_data_url: str
+
+
+class PunctuationGlyphPreviewResponse(BaseModel):
+    backend_version: str
+    items: list[PunctuationGlyphPreviewItem]
+
+
 StructuralMode = Literal["stroke-path", "contour-outline"]
 
 

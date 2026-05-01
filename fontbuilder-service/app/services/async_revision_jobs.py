@@ -6,7 +6,7 @@ from uuid import uuid4
 from app.services.file_storage import RunStorage
 from app.services.orchestrator import GenerationOrchestrator
 
-EXTRA_GLYPHS = {"\\", ".", "\""}
+EXTRA_GLYPHS = {"\\", ".", ",", "'", "\"", "*"}
 SUPPORTED_GLYPHS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ") | EXTRA_GLYPHS
 
 

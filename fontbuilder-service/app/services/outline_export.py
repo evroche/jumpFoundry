@@ -11,6 +11,7 @@ from PIL import Image
 
 
 Point = tuple[float, float]
+DETERMINISTIC_PUNCTUATION_GLYPHS = {".", ",", "'", "\"", "*"}
 
 
 def build_outline_svg_zip(glyphs: list[dict[str, str]]) -> bytes:
@@ -43,6 +44,7 @@ def normalize_glyph_images(
                 "character": character,
                 "image_data_url": normalize_glyph_image_data_url(
                     image_bytes,
+                    character=character,
                     canvas_size=canvas_size,
                     bottom_padding=bottom_padding,
                 ),
@@ -113,6 +115,7 @@ def _prepare_grayscale_image(image_bytes: bytes) -> Image.Image:
 
 def normalize_glyph_image_data_url(
     image_bytes: bytes,
+    character: str = "?",
     canvas_size: int = 1024,
     bottom_padding: int = 4,
 ) -> str:
@@ -125,7 +128,11 @@ def normalize_glyph_image_data_url(
         return f"data:image/png;base64,{encoded}"
 
     left, top, right, bottom = bbox
-    cropped = image.crop((left, top, right + 1, bottom + 1))
+    preserve_vertical_frame = character in DETERMINISTIC_PUNCTUATION_GLYPHS
+    if preserve_vertical_frame:
+        cropped = image.crop((left, 0, right + 1, image.height))
+    else:
+        cropped = image.crop((left, top, right + 1, bottom + 1))
     crop_width, crop_height = cropped.size
     if crop_width <= 0 or crop_height <= 0:
         output = io.BytesIO()
@@ -134,7 +141,7 @@ def normalize_glyph_image_data_url(
         return f"data:image/png;base64,{encoded}"
 
     max_width = float(canvas_size)
-    max_height = float(max(canvas_size - bottom_padding, 1))
+    max_height = float(canvas_size if preserve_vertical_frame else max(canvas_size - bottom_padding, 1))
     scale = min(max_width / crop_width, max_height / crop_height)
     rendered_width = max(1, int(round(crop_width * scale)))
     rendered_height = max(1, int(round(crop_height * scale)))
@@ -142,7 +149,10 @@ def normalize_glyph_image_data_url(
     resized = cropped.resize((rendered_width, rendered_height), Image.Resampling.LANCZOS)
     canvas = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
     offset_x = max(0, int(round((canvas_size - rendered_width) / 2)))
-    offset_y = max(0, int(round(canvas_size - bottom_padding - rendered_height)))
+    if preserve_vertical_frame:
+        offset_y = max(0, int(round((canvas_size - rendered_height) / 2)))
+    else:
+        offset_y = max(0, int(round(canvas_size - bottom_padding - rendered_height)))
     canvas.alpha_composite(resized, (offset_x, offset_y))
 
     output = io.BytesIO()

@@ -183,14 +183,20 @@ def _glyph_label(character: str) -> str:
         return 'the backslash character ("\\\\")'
     if normalized == ".":
         return 'the period character (".")'
+    if normalized == ",":
+        return 'the comma character (",")'
+    if normalized == "'":
+        return 'the apostrophe character ("\'")'
     if normalized == '"':
         return 'the quotation mark character ("\\"")'
+    if normalized == "*":
+        return 'the asterisk character ("*")'
     return f'the letter "{normalized}"'
 
 
 def _glyph_noun(character: str) -> str:
     normalized = (character[:1] or "").upper()
-    if normalized in {'\\', ".", '"'}:
+    if normalized in {'\\', ".", ",", "'", '"', "*"}:
         return "character"
     return "letter"
 

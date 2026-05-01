@@ -1,8 +1,11 @@
+import base64
 import io
+from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
+from PIL import Image
 
 from app.core.config import get_backend_version
 from app.schemas.glyph import (
@@ -17,6 +20,8 @@ from app.schemas.glyph import (
     GlyphGenerationResponse,
     GlyphNormalizationResponse,
     GlyphOutlineExportRequest,
+    PunctuationGlyphPreviewItem,
+    PunctuationGlyphPreviewResponse,
     GlyphVectorizationResponse,
     PartialFontExportRequest,
     SkeletonPreviewRequest,
@@ -34,8 +39,27 @@ router = APIRouter()
 orchestrator = GenerationOrchestrator()
 storage = RunStorage()
 revision_jobs = AsyncRevisionJobService(storage=storage, orchestrator=orchestrator)
-EXTRA_GLYPHS = {"\\", ".", "\""}
+AI_GENERATED_EXTRA_GLYPHS = {"\\"}
+DETERMINISTIC_PUNCTUATION_GLYPHS = {".", ",", "'", "\"", "*"}
+EXTRA_GLYPHS = AI_GENERATED_EXTRA_GLYPHS | DETERMINISTIC_PUNCTUATION_GLYPHS
 SUPPORTED_GLYPHS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ") | EXTRA_GLYPHS
+PUNCTUATION_ASSET_FILENAMES = {
+    ".": "period.png",
+    ",": "comma.png",
+    "'": "apostrophe.png",
+    '"': "quote.png",
+    "*": "asterix.png",
+}
+PUNCTUATION_FALLBACK_ASSET_FILENAMES = {
+    '"': "doubleQuote.png",
+}
+PUNCTUATION_SOURCE_SCALE = {
+    ".": 0.68,
+    ",": 0.68,
+    "'": 0.68,
+    '"': 0.68,
+    "*": 0.74,
+}
 
 
 def _set_no_store(response: Response) -> None:
@@ -71,9 +95,147 @@ def _build_session_response(session_id: str, session: dict, frontend_url: str | 
     )
 
 
+def _assets_dir() -> Path:
+    return Path(__file__).resolve().parents[1] / "assets"
+
+
+def _data_url_for_bytes(image_bytes: bytes, media_type: str = "image/png") -> str:
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    return f"data:{media_type};base64,{encoded}"
+
+
+def _sanitize_punctuation_image(image: Image.Image) -> Image.Image:
+    sanitized = image.convert("RGBA")
+    pixels = sanitized.load()
+    for y in range(sanitized.height):
+        for x in range(sanitized.width):
+            red, green, blue, alpha = pixels[x, y]
+            if alpha == 0:
+                continue
+            if red >= 240 and green >= 240 and blue >= 240:
+                pixels[x, y] = (255, 255, 255, 0)
+                continue
+            pixels[x, y] = (17, 17, 17, alpha)
+    return sanitized
+
+
+def _load_builtin_punctuation_image(character: str) -> Image.Image:
+    assets_dir = _assets_dir()
+    asset_name = PUNCTUATION_ASSET_FILENAMES.get(character)
+    if not asset_name:
+        raise FileNotFoundError(f"No punctuation asset mapping exists for {character!r}.")
+
+    asset_path = assets_dir / asset_name
+    if asset_path.exists():
+        return _sanitize_punctuation_image(Image.open(io.BytesIO(asset_path.read_bytes())))
+
+    fallback_asset_name = PUNCTUATION_FALLBACK_ASSET_FILENAMES.get(character)
+    if fallback_asset_name:
+        fallback_asset_path = assets_dir / fallback_asset_name
+        if fallback_asset_path.exists():
+            return _sanitize_punctuation_image(Image.open(io.BytesIO(fallback_asset_path.read_bytes())))
+
+    if character != '"':
+        raise FileNotFoundError(f"Punctuation asset not found at {asset_path}.")
+
+    apostrophe_path = assets_dir / PUNCTUATION_ASSET_FILENAMES["'"]
+    if not apostrophe_path.exists():
+        raise FileNotFoundError(f'Neither quote asset nor apostrophe asset was found in {assets_dir}.')
+
+    apostrophe = _sanitize_punctuation_image(Image.open(io.BytesIO(apostrophe_path.read_bytes())))
+    bbox = apostrophe.getbbox()
+    if bbox is None:
+        raise FileNotFoundError(f"Apostrophe asset at {apostrophe_path} is empty.")
+
+    mark = apostrophe.crop(bbox)
+    canvas = Image.new("RGBA", apostrophe.size, (0, 0, 0, 0))
+    left_x = max(0, int(round(canvas.width * 0.32 - mark.width / 2)))
+    right_x = min(canvas.width - mark.width, int(round(canvas.width * 0.68 - mark.width / 2)))
+    top_y = max(0, bbox[1])
+    canvas.alpha_composite(mark, dest=(left_x, top_y))
+    canvas.alpha_composite(mark, dest=(right_x, top_y))
+    return canvas
+
+
+def _encode_png(image: Image.Image) -> bytes:
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _normalize_builtin_punctuation_image(character: str) -> bytes:
+    source = _load_builtin_punctuation_image(character)
+    bbox = source.getbbox()
+    if bbox is None:
+        raise FileNotFoundError(f"Punctuation asset for {character!r} is empty.")
+
+    mark = source.crop(bbox)
+    scale = PUNCTUATION_SOURCE_SCALE.get(character, 0.68)
+    scaled_width = max(1, int(round(mark.width * scale)))
+    scaled_height = max(1, int(round(mark.height * scale)))
+    scaled_mark = mark.resize((scaled_width, scaled_height), Image.Resampling.LANCZOS)
+
+    canvas = Image.new("RGBA", source.size, (255, 255, 255, 0))
+    center_x = (bbox[0] + bbox[2]) / 2
+    left_x = int(round(center_x - scaled_width / 2))
+    left_x = max(0, min(canvas.width - scaled_width, left_x))
+
+    if character in {".", ","}:
+        baseline_y = bbox[3]
+        top_y = int(round(baseline_y - scaled_height))
+    elif character in {"'", '"'}:
+        top_y = bbox[1]
+    elif character == "*":
+        center_y = (bbox[1] + bbox[3]) / 2
+        top_y = int(round(center_y - scaled_height / 2))
+    else:
+        top_y = bbox[1]
+
+    top_y = max(0, min(canvas.height - scaled_height, top_y))
+    canvas.alpha_composite(scaled_mark, dest=(left_x, top_y))
+    return _encode_png(canvas)
+
+
+def _build_builtin_punctuation_items() -> list[PunctuationGlyphPreviewItem]:
+    items: list[PunctuationGlyphPreviewItem] = []
+    for character in [".", ",", "'", '"', "*"]:
+        image_bytes = _normalize_builtin_punctuation_image(character)
+        interpreted_vector_data_url, final_render_data_url = vectorize_centerline_and_render(
+            image_bytes,
+            brush_size=16,
+            crop_final_render_to_bounds=False,
+        )
+        items.append(
+            PunctuationGlyphPreviewItem(
+                character=character,
+                image_data_url=_data_url_for_bytes(image_bytes),
+                interpreted_vector_data_url=interpreted_vector_data_url,
+                final_render_data_url=final_render_data_url,
+            )
+        )
+    return items
+
+
 @router.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/api/v1/punctuation-glyphs", response_model=PunctuationGlyphPreviewResponse)
+async def get_punctuation_glyphs() -> PunctuationGlyphPreviewResponse:
+    try:
+        items = await run_in_threadpool(_build_builtin_punctuation_items)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return PunctuationGlyphPreviewResponse(
+        backend_version=get_backend_version(),
+        items=items,
+    )
 
 
 @router.post("/api/v1/sessions", response_model=FontSessionResponse)

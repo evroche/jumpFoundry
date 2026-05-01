@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8200";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8200";
 
 export type StructuralMode = "stroke-path" | "contour-outline";
 
@@ -106,6 +106,18 @@ export type GlyphVectorizationResponse = {
   backend_version: string;
   interpreted_vector_data_url: string;
   final_render_data_url: string;
+};
+
+export type PunctuationGlyphPreviewItem = {
+  character: string;
+  image_data_url: string;
+  interpreted_vector_data_url: string;
+  final_render_data_url: string;
+};
+
+export type PunctuationGlyphPreviewResponse = {
+  backend_version: string;
+  items: PunctuationGlyphPreviewItem[];
 };
 
 export type AdditionalReferenceInput = {
@@ -277,6 +289,26 @@ export async function submitGlyphVectorization(
 
   if (!response.ok) {
     let message = "Failed to vectorize glyph preview";
+    try {
+      const payload = await response.json();
+      message = payload.detail ?? message;
+    } catch {
+      const text = await response.text();
+      message = text || message;
+    }
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function fetchPunctuationGlyphs(): Promise<PunctuationGlyphPreviewResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/punctuation-glyphs?t=${Date.now()}`, {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    let message = "Failed to load punctuation glyphs";
     try {
       const payload = await response.json();
       message = payload.detail ?? message;

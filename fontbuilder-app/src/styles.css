@@ -822,6 +822,10 @@ textarea {
   pointer-events: auto;
 }
 
+.session-font-preview-actions .session-font-download-chip {
+  pointer-events: auto;
+}
+
 .session-font-preview-action-button {
   position: relative;
   z-index: 4;
@@ -832,6 +836,49 @@ textarea {
 
 .session-font-preview-action-button:hover:not(:disabled) {
   transform: scale(1.05);
+}
+
+.session-font-download-chip {
+  border: 0;
+  background: #111111;
+  color: var(--session-accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  height: 156px;
+  min-width: 0;
+  max-width: min(58vw, 860px);
+  padding: 0 52px;
+  border-radius: 999px;
+  cursor: pointer;
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.session-font-download-chip-label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 3rem;
+  line-height: 1;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.session-font-download-chip-icon {
+  width: 58px;
+  height: 58px;
+  flex: 0 0 auto;
+  background: currentColor;
+  mask-position: center center;
+  mask-repeat: no-repeat;
+  mask-size: contain;
+  -webkit-mask-position: center center;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
 }
 
 .session-font-preview-textarea {
