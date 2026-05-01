@@ -380,16 +380,16 @@ class AsyncRevisionJobService:
         if completed and not failed:
             return (
                 "I finished the latest revision pass. The updated letters are on the board. "
-                "If you'd like more changes, select the letters you'd like to revise and let me know when you're ready."
+                "If you'd like more changes, select the letters you'd like to revise and press redo."
             )
         if completed and failed:
             return (
                 "I finished the latest revision pass. The updated letters are on the board, but a few requested letters did not update. "
-                "If you'd like to try again, select those letters and let me know when you're ready."
+                "If you'd like to try again, select those letters and press redo."
             )
         return (
             "I couldn't produce new revisions from that last request. "
-            "If you'd like to try again, select the letters you'd like to revise and let me know when you're ready."
+            "If you'd like to try again, select the letters you'd like to revise and press redo."
         )
 
     @staticmethod

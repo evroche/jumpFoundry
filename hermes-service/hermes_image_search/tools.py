@@ -567,7 +567,7 @@ def generate_fontsketch_alphabet_batch(args: dict, **kwargs) -> str:
         {
             "status": "ready",
             "stage": "review",
-            "instruction": "Here is the full set of characters for your typeface. If you'd like to request changes, select the letters you'd like to revise and let me know when you're ready. If everything looks good, tell me \"continue\" and I'll move on.",
+            "instruction": "Here is the full set of characters for your typeface. If you'd like changes, select the letters you'd like to revise and press redo. If everything looks good, approve it and I'll move on.",
             "source_character": approved_character,
             "target_character": next_targets[0] if next_targets else _next_alphabet_character(approved_character),
             "latest_run_id": latest_run_id,
@@ -670,7 +670,7 @@ def normalize_fontsketch_glyphs(args: dict, **kwargs) -> str:
         session_id,
         {
             "status": "awaiting_font_name",
-            "instruction": "Now I'll compile your font and prepare it for download. What name would you like to give your font?",
+            "instruction": "What name would you like to give your font?",
             "normalized_glyphs": payload.get("glyphs", []),
             "selected_revision_characters": [],
         },

@@ -857,15 +857,17 @@ textarea {
 }
 
 .session-font-download-chip-label {
-  display: block;
+  display: flex;
+  align-items: center;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 3rem;
-  line-height: 1;
+  line-height: 1.12;
   font-weight: 500;
   letter-spacing: 0.01em;
+  padding: 0.08em 0 0.16em;
 }
 
 .session-font-download-chip-icon {

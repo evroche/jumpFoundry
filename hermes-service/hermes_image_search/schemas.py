@@ -119,7 +119,8 @@ GENERATE_FONTSKETCH_REVIEW_GLYPH = {
     "description": (
         "Generate the first review glyph for the current JumpFoundry session from the two drawn seed letters. "
         "Use when the user finishes drawing the second seed letter and wants the review glyph generated. "
-        "Before calling this tool, Hermes should tell the user in first person that it is now generating the first letter for review."
+        "Before calling this tool, Hermes should tell the user in first person that it is now generating the first letter for review. "
+        "Keep the surrounding message short and do not add extra `let me know` instructions."
     ),
     "parameters": {
         "type": "object",
@@ -139,7 +140,8 @@ GENERATE_FONTSKETCH_ALPHABET_BATCH = {
     "name": "generate_alphabet",
     "description": (
         "Generate the next batch of alphabet glyphs for the current JumpFoundry session after the first review glyph is approved. "
-        "Before calling this tool, Hermes should tell the user in first person that it is now generating the alphabet for review."
+        "Before calling this tool, Hermes should tell the user in first person that it is now generating the alphabet for review. "
+        "After it completes, Hermes should keep the reply concise and not add extra commentary."
     ),
     "parameters": {
         "type": "object",
@@ -177,7 +179,8 @@ EXPORT_FONTSKETCH_OUTLINE_SET = {
 NORMALIZE_FONTSKETCH_GLYPHS = {
     "name": "normalize_glyphs",
     "description": (
-        "Trim and normalize the current JumpFoundry glyph set so it is ready to be compiled into a font."
+        "Trim and normalize the current JumpFoundry glyph set so it is ready to be compiled into a font. "
+        "After this tool completes, Hermes should ask only for the font name."
     ),
     "parameters": {
         "type": "object",

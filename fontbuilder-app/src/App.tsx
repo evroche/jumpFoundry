@@ -2074,6 +2074,22 @@ export default function App() {
                     />
                   </section>
                   <div className="session-review-actions session-review-actions-centered session-font-preview-actions">
+                    <button
+                      type="button"
+                      className="session-icon-button session-font-preview-action-button"
+                      onClick={() => adjustPreviewFontSize("smaller")}
+                      aria-label="Smaller"
+                    >
+                      <img src={smallerIcon} alt="" className="session-icon-image" />
+                    </button>
+                    <button
+                      type="button"
+                      className="session-icon-button session-font-preview-action-button"
+                      onClick={() => adjustPreviewFontSize("bigger")}
+                      aria-label="Bigger"
+                    >
+                      <img src={biggerIcon} alt="" className="session-icon-image" />
+                    </button>
                     <div className="session-seed-control session-font-weight-control">
                       <input
                         type="text"
@@ -2107,22 +2123,6 @@ export default function App() {
                           maskImage: `url(${downloadIcon})`,
                         }}
                       />
-                    </button>
-                    <button
-                      type="button"
-                      className="session-icon-button session-font-preview-action-button"
-                      onClick={() => adjustPreviewFontSize("smaller")}
-                      aria-label="Smaller"
-                    >
-                      <img src={smallerIcon} alt="" className="session-icon-image" />
-                    </button>
-                    <button
-                      type="button"
-                      className="session-icon-button session-font-preview-action-button"
-                      onClick={() => adjustPreviewFontSize("bigger")}
-                      aria-label="Bigger"
-                    >
-                      <img src={biggerIcon} alt="" className="session-icon-image" />
                     </button>
                   </div>
                 </div>
@@ -2414,7 +2414,7 @@ function getExportFamilyName(fontName: string | undefined, sessionId: string): s
 }
 
 function getPreviewPackageFilename(fontName: string | undefined, sessionId: string): string {
-  return `${slugifyFontName(getExportFamilyName(fontName, sessionId))}-package.zip`;
+  return `${slugifyFontName(getExportFamilyName(fontName, sessionId))}.zip`;
 }
 
 function collectGlyphVectorSources(

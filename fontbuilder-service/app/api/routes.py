@@ -558,7 +558,7 @@ async def export_font_package(payload: FontPackageExportRequest) -> StreamingRes
         ],
         payload.family_name,
     )
-    filename = f"{(payload.family_name.strip() or 'jumpfoundry').replace(' ', '-')}-package.zip"
+    filename = f"{(payload.family_name.strip() or 'jumpfoundry').replace(' ', '-')}.zip"
     return StreamingResponse(
         io.BytesIO(package_bytes),
         media_type="application/zip",
