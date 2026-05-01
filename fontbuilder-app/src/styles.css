@@ -622,10 +622,10 @@ textarea {
 }
 
 .session-batch-image {
-  width: min(78%, calc(100% - 24px));
-  height: min(78%, calc(100% - 24px));
-  max-width: calc(100% - 24px);
-  max-height: calc(100% - 24px);
+  width: min(70%, calc(100% - 48px));
+  height: min(70%, calc(100% - 48px));
+  max-width: calc(100% - 48px);
+  max-height: calc(100% - 48px);
   object-fit: contain;
   object-position: center center;
   align-self: center;
@@ -674,6 +674,91 @@ textarea {
 .session-batch-select.is-pending:hover .session-batch-select-overlay {
   background: rgba(17, 17, 17, 0.18);
   animation: session-batch-pulse 1.9s ease-in-out infinite;
+}
+
+.session-batch-slider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 560px;
+  height: 156px;
+  flex: 0 0 auto;
+}
+
+.session-batch-slider-input {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 516px;
+  height: 156px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  box-shadow: none;
+  background: none;
+  color: transparent;
+  accent-color: transparent;
+  cursor: pointer;
+  display: block;
+}
+
+.session-batch-slider-input:focus,
+.session-batch-slider-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.session-batch-slider-input::-webkit-slider-runnable-track {
+  -webkit-appearance: none;
+  width: 516px;
+  height: 140px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent url("./assets/material-icons/sliderTrack.svg") center center / 516px 140px no-repeat;
+}
+
+.session-batch-slider-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 44px;
+  height: 140px;
+  margin-top: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent url("./assets/material-icons/sliderHandle.svg") center center / 44px 140px no-repeat;
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+
+.session-batch-slider-input::-webkit-slider-thumb:hover {
+  transform: scale(1.05);
+}
+
+.session-batch-slider-input::-moz-range-track {
+  width: 516px;
+  height: 140px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent url("./assets/material-icons/sliderTrack.svg") center center / 516px 140px no-repeat;
+}
+
+.session-batch-slider-input::-moz-range-thumb {
+  width: 44px;
+  height: 140px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent url("./assets/material-icons/sliderHandle.svg") center center / 44px 140px no-repeat;
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+
+.session-batch-slider-input::-moz-range-thumb:hover {
+  transform: scale(1.05);
 }
 
 .session-font-preview-frame {

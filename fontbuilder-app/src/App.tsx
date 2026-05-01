@@ -41,6 +41,10 @@ const BRUSH_OPTIONS = [
   { value: 19, label: "Medium" },
   { value: 11, label: "Small" },
 ] as const;
+const MIN_RENDER_BRUSH_SIZE = 4;
+const MAX_RENDER_BRUSH_SIZE = 144;
+const BATCH_SLIDER_MIN_RENDER_BRUSH_SIZE = 18;
+const BATCH_SLIDER_MAX_RENDER_BRUSH_SIZE = 84;
 const FINAL_RENDER_BRUSH_SCALE = 2;
 const FIRST_SEED_CHARACTER = "E";
 const SECOND_SEED_CHARACTER = "S";
@@ -1000,7 +1004,7 @@ export default function App() {
     if (!batchResult?.accepted_run_id) {
       return;
     }
-    setBatchRenderBrushSize(drawingData?.brush_size ?? brushSize);
+    setBatchRenderBrushSize(clampBatchSliderBrushSize(drawingData?.brush_size ?? brushSize));
   }, [batchResult?.accepted_run_id, drawingData?.brush_size, brushSize]);
 
   useEffect(() => {
@@ -1289,7 +1293,7 @@ export default function App() {
         await updateSession(sessionId, {
           source_character: SECOND_SEED_CHARACTER,
           target_character: sampleReviewCharacter(firstSeedCharacter),
-          instruction: 'I recorded your first letter. Now draw the letter "S".\n\nLet me know when you\'re done and I\'ll generate the first sample character for you to review.',
+          instruction: 'I recorded your first letter. Now draw the letter "S".\n\nApprove it when you\'re done and I\'ll generate the first sample character for you to review.',
           skeleton_image_data_url: "",
           current_drawing_image_data_url: "",
           status: "ready",
@@ -1788,13 +1792,6 @@ export default function App() {
     });
   }
 
-  function adjustBatchRenderBrushSize(direction: "smaller" | "bigger") {
-    setBatchRenderBrushSize((current) => {
-      const delta = direction === "bigger" ? BATCH_RENDER_BRUSH_STEP : -BATCH_RENDER_BRUSH_STEP;
-      return clampRenderBrushSize(current + delta);
-    });
-  }
-
   async function preparePreviewFontAssets() {
     if (!sessionId || !result || !batchResult || seedReferences.length < 2) {
       throw new Error("Generate the glyph set first so the preview can prepare all weights.");
@@ -1908,22 +1905,18 @@ export default function App() {
                     </div>
                   </section>
                   <div className="session-review-actions session-review-actions-centered">
-                    <button
-                      type="button"
-                      className="session-icon-button"
-                      onClick={() => adjustBatchRenderBrushSize("smaller")}
-                      aria-label="Smaller X stroke"
-                    >
-                      <img src={smallerIcon} alt="" className="session-icon-image" />
-                    </button>
-                    <button
-                      type="button"
-                      className="session-icon-button"
-                      onClick={() => adjustBatchRenderBrushSize("bigger")}
-                      aria-label="Bigger X stroke"
-                    >
-                      <img src={biggerIcon} alt="" className="session-icon-image" />
-                    </button>
+                    <div className="session-batch-slider" aria-label="X stroke weight">
+                      <input
+                        type="range"
+                        min={BATCH_SLIDER_MIN_RENDER_BRUSH_SIZE}
+                        max={BATCH_SLIDER_MAX_RENDER_BRUSH_SIZE}
+                        step={BATCH_RENDER_BRUSH_STEP}
+                        value={batchRenderBrushSize}
+                        onChange={(event) => setBatchRenderBrushSize(clampBatchSliderBrushSize(Number(event.target.value)))}
+                        className="session-batch-slider-input"
+                        aria-label="X stroke weight"
+                      />
+                    </div>
                     <button
                       type="button"
                       className="session-icon-button"
@@ -2140,8 +2133,6 @@ export default function App() {
                     <img src={clearIcon} alt="" className="session-icon-image" />
                   </button>
 
-                  <div className="session-controls-separator" aria-hidden="true" />
-
                   <button type="button" className="session-icon-button" aria-label="Confirm" onClick={postDrawConfirmedEvent}>
                     <img src={approveIcon} alt="" className="session-icon-image" />
                   </button>
@@ -2289,7 +2280,11 @@ function previewFontFamilyForWeight(weightKey: PreviewWeightKey): string {
 }
 
 function clampRenderBrushSize(value: number): number {
-  return Math.max(4, Math.min(144, value));
+  return Math.max(MIN_RENDER_BRUSH_SIZE, Math.min(MAX_RENDER_BRUSH_SIZE, value));
+}
+
+function clampBatchSliderBrushSize(value: number): number {
+  return Math.max(BATCH_SLIDER_MIN_RENDER_BRUSH_SIZE, Math.min(BATCH_SLIDER_MAX_RENDER_BRUSH_SIZE, value));
 }
 
 function getExportFamilyName(fontName: string | undefined, sessionId: string): string {

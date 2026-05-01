@@ -322,11 +322,11 @@ def start_fontsketch_session(args: dict, **kwargs) -> str:
     fallback_message = (
         f"I've opened up JumpFoundry in your browser:\n{frontend_url}\n\n"
         'Start by drawing two sample letters. I\'ll use them to build the rest of your font.\n\n'
-        'Go ahead and draw the first letter "E". Let me know when you\'re done.'
+        'Go ahead and draw the first letter "E". Approve it when you\'re done.'
         if frontend_url
         else
         'Start by drawing two sample letters. I\'ll use them to build the rest of your font.\n\n'
-        'Go ahead and draw the first letter "E". Let me know when you\'re done.'
+        'Go ahead and draw the first letter "E". Approve it when you\'re done.'
     )
 
     startup_message = message or fallback_message

@@ -1,11 +1,13 @@
 import base64
 from concurrent.futures import Future, ThreadPoolExecutor
 import hashlib
+import io
 import json
 from pathlib import Path
 import time
 
 import httpx
+from PIL import Image
 
 from app.core.config import get_settings
 from app.schemas.glyph import GlyphAnalysis
@@ -134,7 +136,17 @@ class OpenAIImagesClient:
 
             body = response.json()
             image_base64 = body["data"][0]["b64_json"]
-            return base64.b64decode(image_base64), body
+            image_bytes = base64.b64decode(image_base64)
+            dark_pixel_count = _significant_dark_pixel_count(image_bytes)
+            if dark_pixel_count < 1000:
+                last_runtime_error = RuntimeError(
+                    f"OpenAI Images returned a near-empty image (dark_pixels={dark_pixel_count})."
+                )
+                if attempt >= 2:
+                    raise last_runtime_error
+                time.sleep(0.8 * (attempt + 1))
+                continue
+            return image_bytes, body
 
         if last_runtime_error is not None:
             raise last_runtime_error
@@ -146,6 +158,15 @@ class OpenAIImagesClient:
 def _to_data_url(image_bytes: bytes, image_media_type: str) -> str:
     image_b64 = base64.b64encode(image_bytes).decode("utf-8")
     return f"data:{image_media_type};base64,{image_b64}"
+
+
+def _significant_dark_pixel_count(image_bytes: bytes) -> int:
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+    dark_pixels = 0
+    for r, g, b, a in image.getdata():
+        if a and (r + g + b) < 720:
+            dark_pixels += 1
+    return dark_pixels
 
 
 def _extract_json_block(text: str) -> str:

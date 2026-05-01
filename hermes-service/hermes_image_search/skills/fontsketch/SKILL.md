@@ -21,7 +21,7 @@ After the tool returns:
 - do not paraphrase it
 - do not add extra startup copy before or after it
 - do not say `I've started the font session.`
-- do not add `When you're done, tell me and I'll move to the next step.`
+- do not add `Approve it when you're done and I'll move to the next step.`
 
 When the user says "done", asks what to do next, asks for the next instruction, or asks what Hermes wants them to do in JumpFoundry, first call `get_fontsketch_session_status`. Then choose the next tool based on the current stage:
 
