@@ -11,8 +11,9 @@ from PIL import Image, ImageDraw
 Point = tuple[float, float]
 Pixel = tuple[int, int]
 
-MAX_TOTAL_POLYLINE_POINTS = 12000
-MAX_POINTS_PER_POLYLINE = 600
+TRACE_SIMPLIFICATION_EPSILON = 1.8
+MAX_TOTAL_POLYLINE_POINTS = 18000
+MAX_POINTS_PER_POLYLINE = 900
 MAX_VECTOR_DATA_URL_CHARS = 2_000_000
 FINAL_RENDER_BRUSH_SCALE = 2.0
 
@@ -29,7 +30,11 @@ def vectorize_centerline_and_render(
     binary = _binarize(image)
     skeleton = _zhang_suen_thinning(binary)
     polylines = _trace_polylines(skeleton)
-    simplified = [_rdp(polyline, epsilon=2.4) for polyline in polylines if len(polyline) > 1]
+    simplified = [
+        _rdp(polyline, epsilon=TRACE_SIMPLIFICATION_EPSILON)
+        for polyline in polylines
+        if len(polyline) > 1
+    ]
     simplified = _cap_polyline_complexity(simplified)
 
     vector_data_url = _vector_svg_data_url(simplified, output_size)
