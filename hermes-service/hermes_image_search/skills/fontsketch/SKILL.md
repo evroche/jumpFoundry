@@ -3,12 +3,12 @@ name: fontsketch
 description: Use when the user wants to create a font using JumpFoundry, launch a new local font session, or open the JumpFoundry drawing app from Hermes.
 metadata:
   hermes:
-    requires_toolsets: [fontsketch]
+    requires_toolsets: [jumpfoundry]
 ---
 
 # JumpFoundry
 
-When the user says they want to create a font using JumpFoundry, start a new session with `start_fontsketch_session`.
+When the user says they want to create a font using JumpFoundry, start a new session with `start_jumpfoundry_session`.
 
 Default behavior:
 - use the local frontend at `http://127.0.0.1:5174`
@@ -24,9 +24,9 @@ After the tool returns:
 - do not add `Approve it when you're done and I'll move to the next step.`
 - do not add any extra sentence like `Once you've drawn...`, `let me know...`, or `just let me know...`
 
-When the user says "done", asks what to do next, asks for the next instruction, or asks what Hermes wants them to do in JumpFoundry, first call `get_fontsketch_session_status`. Then choose the next tool based on the current stage:
+When the user says "done", asks what to do next, asks for the next instruction, or asks what Hermes wants them to do in JumpFoundry, first call `get_jumpfoundry_session_status`. Then choose the next tool based on the current stage:
 
-- If the session is on the first draw step for `E`, call `advance_fontsketch_session`.
+- If the session is on the first draw step for `E`, call `advance_jumpfoundry_session`.
 - If the session is on the second draw step and the user has finished drawing `S`, first tell the user `I'm now generating the first letter for you to review.` Then call `generate_review_glyph` immediately after that message.
 - If the session is reviewing the first generated sample and the user approves it or wants to continue, first tell the user `I'm now generating the alphabet for you to review.` Then call `generate_alphabet` immediately after that message.
 - If the session is on the alphabet board and the user wants to continue without revisions, call `export_outline_svgs`, then `normalize_glyphs`, then ask only `What name would you like to give your font?`
@@ -51,7 +51,7 @@ When restating JumpFoundry instructions:
 
 Use the session instruction as the source of truth for the current stage.
 
-If the user says they want to make changes, revise letters, fix part of the alphabet board, or says they finished selecting letters on the board, first call `get_fontsketch_session_status`.
+If the user says they want to make changes, revise letters, fix part of the alphabet board, or says they finished selecting letters on the board, first call `get_jumpfoundry_session_status`.
 
 If the session includes `selected_revision_characters` and that list is non-empty, treat those selected letters as the current revision target set. Explicitly name the selected letters and ask what shared change should be applied to them, for example: "I see you selected A, B, D, F, G. What change would you like me to make?" Once the user describes the change, call `apply_revision` with that correction.
 

@@ -108,7 +108,11 @@ def _start_server(ctx) -> None:
                         _seen_event_ids.clear()
                         _seen_event_ids.add(event_id)
 
-                queued = ctx.inject_message(_build_injected_message(event_type, payload), role="user")
+                queued = ctx.inject_message(
+                    _build_injected_message(event_type, payload),
+                    role="user",
+                    visible=False,
+                )
                 if not queued:
                     return self._send_json(
                         503,

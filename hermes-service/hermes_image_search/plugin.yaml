@@ -2,9 +2,9 @@ name: fontsketch
 version: "0.1.0"
 description: Launch and support local JumpFoundry font-creation sessions
 provides_tools:
-  - start_fontsketch_session
-  - get_fontsketch_session_status
-  - advance_fontsketch_session
+  - start_jumpfoundry_session
+  - get_jumpfoundry_session_status
+  - advance_jumpfoundry_session
   - generate_review_glyph
   - generate_alphabet
   - export_outline_svgs

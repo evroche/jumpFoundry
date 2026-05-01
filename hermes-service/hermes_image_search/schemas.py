@@ -44,7 +44,7 @@ SEARCH_IMAGES = {
 
 
 START_FONTSKETCH_SESSION = {
-    "name": "start_fontsketch_session",
+    "name": "start_jumpfoundry_session",
     "description": (
         "Create a new local JumpFoundry session and open the browser. "
         "Use when the user wants to create a font using JumpFoundry. "
@@ -75,7 +75,7 @@ START_FONTSKETCH_SESSION = {
 
 
 GET_FONTSKETCH_SESSION_STATUS = {
-    "name": "get_fontsketch_session_status",
+    "name": "get_jumpfoundry_session_status",
     "description": (
         "Read the current local JumpFoundry session and return the instruction for the user. "
         "Use when the user asks what to do next in JumpFoundry or says they finished a step."
@@ -95,7 +95,7 @@ GET_FONTSKETCH_SESSION_STATUS = {
 
 
 ADVANCE_FONTSKETCH_SESSION = {
-    "name": "advance_fontsketch_session",
+    "name": "advance_jumpfoundry_session",
     "description": (
         "Advance the current local JumpFoundry session to its next step. "
         "Use when the user says they are done with the current step and wants Hermes to move JumpFoundry forward."
