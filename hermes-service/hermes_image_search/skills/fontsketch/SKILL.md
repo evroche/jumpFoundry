@@ -18,8 +18,12 @@ Default behavior:
 After the tool returns:
 
 - use the returned `startup_message` verbatim
+- output only the returned `startup_message`
 - do not paraphrase it
 - do not add extra startup copy before or after it
+- do not reformat it into bullets, numbered steps, headings, or task lists
+- do not add commentary based on past sessions, remembered preferences, or writing style
+- do not add suggestions like `quiggly`, `wavy`, or any other stylistic advice unless the tool output explicitly says it
 - do not say `I've started the font session.`
 - do not add `Approve it when you're done and I'll move to the next step.`
 - do not add any extra sentence like `Once you've drawn...`, `let me know...`, or `just let me know...`
@@ -28,9 +32,9 @@ When the user says "done", asks what to do next, asks for the next instruction, 
 
 - If the session is on the first draw step for `E`, call `advance_jumpfoundry_session`.
 - If the session is on the second draw step and the user has finished drawing `S`, first tell the user `I'm now generating the first letter for you to review.` Then call `generate_review_glyph` immediately after that message.
-- If the session is reviewing the first generated sample and the user approves it or wants to continue, first tell the user `I'm now generating the alphabet for you to review.` Then call `generate_alphabet` immediately after that message.
+- If the session is reviewing the first generated sample and the user approves it, says `done`, or wants to continue, first tell the user `I'm now generating the alphabet for you to review.` Then call `generate_alphabet` immediately after that message. Do not ask an extra confirmation question at this step.
 - If the session is on the alphabet board and the user wants to continue without revisions, call `export_outline_svgs`, then `normalize_glyphs`, then ask only `What name would you like to give your font?`
-- If the session is waiting for a font name and the user provides one, call `set_font_name`, then `build_font_file` with that exact name.
+- If the session is waiting for a font name and the user provides one, call `set_font_name` with that exact name, then stop. `set_font_name` now prepares the final preview immediately. Do not use browser automation tools after this step.
 
 When restating JumpFoundry instructions:
 - always use first person: "I" or "I'm"
@@ -48,6 +52,11 @@ When restating JumpFoundry instructions:
 - on draw steps, use `Approve it when you're done.` and do not say `let me know`
 - after `normalize_glyphs`, do not summarize completed export or normalization work; ask only for the font name
 - when the UI already has approve or redo controls, prefer `approve it` or `press redo` over `tell me` or `let me know`
+- after `set_font_name` or `build_font_file`, do not use `navigate`, `click`, `snapshot`, `browser_snapshot`, or any other browser-inspection tool; the JumpFoundry app handles the preview
+
+Exact phrasing rules:
+- After `generate_review_glyph`, reply only with `I generated "M". Approve it if it looks right, or request changes.` Replace `M` with the actual target letter if needed.
+- After `generate_alphabet`, reply only with the returned session instruction. Do not summarize, embellish, or add encouragement.
 
 Use the session instruction as the source of truth for the current stage.
 

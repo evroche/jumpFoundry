@@ -179,8 +179,12 @@ def _extract_json_block(text: str) -> str:
 
 def _glyph_label(character: str) -> str:
     normalized = (character[:1] or "").upper()
+    if normalized.isdigit():
+        return f'the digit "{normalized}"'
     if normalized == "\\":
         return 'the backslash character ("\\\\")'
+    if normalized == "/":
+        return 'the forward slash character ("/")'
     if normalized == ".":
         return 'the period character (".")'
     if normalized == ",":
@@ -191,12 +195,18 @@ def _glyph_label(character: str) -> str:
         return 'the quotation mark character ("\\"")'
     if normalized == "*":
         return 'the asterisk character ("*")'
+    if normalized == "?":
+        return 'the question mark character ("?")'
+    if not normalized.isalpha():
+        return f'the character "{normalized}"'
     return f'the letter "{normalized}"'
 
 
 def _glyph_noun(character: str) -> str:
     normalized = (character[:1] or "").upper()
-    if normalized in {'\\', ".", ",", "'", '"', "*"}:
+    if normalized.isdigit():
+        return "digit"
+    if normalized in {"\\", "/", ".", ",", "'", '"', "*", "!", "@", "#", "$", "%", "^", "&", "(", ")", "-", ":", ";", "?"}:
         return "character"
     return "letter"
 

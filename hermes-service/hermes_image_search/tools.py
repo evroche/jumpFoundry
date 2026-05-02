@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime
@@ -16,12 +17,18 @@ from .service.search import search_images as run_search
 
 
 BACKEND_BASE_URL = "http://127.0.0.1:8200"
-AI_GENERATED_EXTRA_GLYPHS = ["\\"]
-DETERMINISTIC_PUNCTUATION_GLYPHS = [".", ",", "'", "\"", "*"]
-EXTRA_GLYPHS = [*AI_GENERATED_EXTRA_GLYPHS, *DETERMINISTIC_PUNCTUATION_GLYPHS]
-SUPPORTED_GLYPHS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ") | set(EXTRA_GLYPHS)
+LETTER_GLYPHS = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+DIGIT_GLYPHS = list("0123456789")
+PUNCTUATION_GLYPHS = ["!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "-", ":", ";", "/", "?", "\"", "'", ".", ","]
+DETERMINISTIC_PUNCTUATION_GLYPHS = ["^", "*", ":", ";", "\"", "'", ".", ","]
+SUPPORTED_GLYPHS = set(LETTER_GLYPHS) | set(DIGIT_GLYPHS) | set(PUNCTUATION_GLYPHS) | {"\\"}
+FULL_GLYPH_SEQUENCE = [*LETTER_GLYPHS, *DIGIT_GLYPHS, *PUNCTUATION_GLYPHS]
 SAMPLE_REVIEW_CHARACTER_OFFSET = 8
-ALPHABET_BATCH_MAX_PARALLEL = 4
+DEFAULT_ALPHABET_BATCH_MAX_PARALLEL = 6
+DEFAULT_ALPHABET_GENERATION_MODE = "all"
+DEFAULT_ALPHABET_LITE_START_OFFSET = 1
+DEFAULT_ALPHABET_LITE_COUNT = 3
+APP_CONFIG_PATH = Path(__file__).resolve().parents[2] / "fontbuilder-app" / "src" / "config.ts"
 
 
 def search_images(args: dict, **kwargs) -> str:
@@ -113,6 +120,33 @@ def _normalize_letter(value: str, fallback: str = "A") -> str:
     return normalized if normalized in SUPPORTED_GLYPHS else fallback
 
 
+def _load_jumpfoundry_app_config() -> dict[str, int | str]:
+    try:
+        text = APP_CONFIG_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return {
+            "alphabetGenerationMode": DEFAULT_ALPHABET_GENERATION_MODE,
+            "alphabetLiteStartOffset": DEFAULT_ALPHABET_LITE_START_OFFSET,
+            "alphabetLiteCount": DEFAULT_ALPHABET_LITE_COUNT,
+            "alphabetBatchMaxParallel": DEFAULT_ALPHABET_BATCH_MAX_PARALLEL,
+        }
+
+    def extract_string(key: str, default: str) -> str:
+        match = re.search(rf"{re.escape(key)}:\s*\"([^\"]+)\"", text)
+        return match.group(1) if match else default
+
+    def extract_int(key: str, default: int) -> int:
+        match = re.search(rf"{re.escape(key)}:\s*(-?\d+)", text)
+        return int(match.group(1)) if match else default
+
+    return {
+        "alphabetGenerationMode": extract_string("alphabetGenerationMode", DEFAULT_ALPHABET_GENERATION_MODE),
+        "alphabetLiteStartOffset": extract_int("alphabetLiteStartOffset", DEFAULT_ALPHABET_LITE_START_OFFSET),
+        "alphabetLiteCount": extract_int("alphabetLiteCount", DEFAULT_ALPHABET_LITE_COUNT),
+        "alphabetBatchMaxParallel": extract_int("alphabetBatchMaxParallel", DEFAULT_ALPHABET_BATCH_MAX_PARALLEL),
+    }
+
+
 def _next_alphabet_character(character: str) -> str:
     normalized = _normalize_letter(character, "A")
     if normalized == "Z":
@@ -127,6 +161,46 @@ def _alphabet_character_offset(character: str, steps: int) -> str:
     return current
 
 
+def _glyph_sequence_character_offset(character: str, steps: int) -> str:
+    normalized = _normalize_letter(character, FULL_GLYPH_SEQUENCE[0])
+    try:
+        current_index = FULL_GLYPH_SEQUENCE.index(normalized)
+    except ValueError:
+        current_index = 0
+    if not FULL_GLYPH_SEQUENCE:
+        return "A"
+    normalized_steps = steps % len(FULL_GLYPH_SEQUENCE)
+    return FULL_GLYPH_SEQUENCE[(current_index + normalized_steps) % len(FULL_GLYPH_SEQUENCE)]
+
+
+def _configured_lite_batch_targets(character: str, start_offset: int, count: int) -> list[str]:
+    normalized = _normalize_letter(character, FULL_GLYPH_SEQUENCE[0])
+    items: list[str] = []
+    step = max(0, start_offset)
+    attempts = 0
+    max_attempts = max(len(FULL_GLYPH_SEQUENCE) * 2, max(count, 0))
+    while len(items) < max(count, 0) and attempts < max_attempts:
+        target = _glyph_sequence_character_offset(normalized, step)
+        if target != normalized and target not in DETERMINISTIC_PUNCTUATION_GLYPHS and target not in items:
+            items.append(target)
+        step += 1
+        attempts += 1
+    return items
+
+
+def _configured_batch_targets(approved_character: str) -> list[str]:
+    config = _load_jumpfoundry_app_config()
+    generation_mode = str(config.get("alphabetGenerationMode") or DEFAULT_ALPHABET_GENERATION_MODE).strip().lower()
+    normalized = _normalize_letter(approved_character, FULL_GLYPH_SEQUENCE[0])
+    if generation_mode == "lite":
+        return _configured_lite_batch_targets(
+            normalized,
+            int(config.get("alphabetLiteStartOffset") or DEFAULT_ALPHABET_LITE_START_OFFSET),
+            int(config.get("alphabetLiteCount") or DEFAULT_ALPHABET_LITE_COUNT),
+        )
+    return [glyph for glyph in FULL_GLYPH_SEQUENCE if glyph != normalized and glyph not in DETERMINISTIC_PUNCTUATION_GLYPHS]
+
+
 def _data_url_to_bytes(data_url: str) -> bytes:
     if "," not in data_url:
         return b""
@@ -134,6 +208,64 @@ def _data_url_to_bytes(data_url: str) -> bytes:
     if ";base64" in header:
         return base64.b64decode(payload)
     return payload.encode("utf-8")
+
+
+def _build_font_preview_for_session(session_id: str, font_name: str) -> dict:
+    session_payload = _read_full_session(session_id)
+    if session_payload.get("error"):
+        return session_payload
+
+    existing_font_name = (session_payload.get("font_name") or "").strip()
+    existing_font_data_url = (session_payload.get("font_file_data_url") or "").strip()
+    existing_status = (session_payload.get("status") or "").strip()
+    if existing_font_data_url and existing_font_name == font_name and existing_status in {"preview_requested", "ready"}:
+        return {
+            "session_id": session_id,
+            "status": existing_status or "preview_requested",
+            "instruction": session_payload.get("instruction", ""),
+            "font_name": font_name,
+            "font_bytes": 0,
+        }
+
+    glyphs = session_payload.get("normalized_glyphs", []) or _session_export_glyphs(session_payload)
+    if not glyphs:
+        return {"error": "No normalized JumpFoundry glyphs are available to build the font yet."}
+
+    _patch_session(
+        session_id,
+        {
+            "font_name": font_name,
+            "status": "building_font",
+            "instruction": f'I am compiling "{font_name}" into a font file now.',
+        },
+    )
+    try:
+        font_bytes = _binary_request(
+            f"{BACKEND_BASE_URL}/api/v1/export-partial-font",
+            payload={"session_id": session_id, "glyphs": glyphs},
+            timeout=120.0,
+        )
+    except urllib.error.URLError as exc:
+        return {"error": f"Failed to build the JumpFoundry font: {exc}"}
+
+    font_data_url = f"data:font/ttf;base64,{base64.b64encode(font_bytes).decode('ascii')}"
+    updated_payload = _patch_session(
+        session_id,
+        {
+            "font_name": font_name,
+            "font_file_data_url": font_data_url,
+            "normalized_glyphs": glyphs,
+            "status": "preview_requested",
+            "instruction": f'The final preview for "{font_name}" is ready.',
+        },
+    )
+    return {
+        "session_id": session_id,
+        "status": updated_payload.get("status", "preview_requested"),
+        "instruction": updated_payload.get("instruction", ""),
+        "font_name": font_name,
+        "font_bytes": len(font_bytes),
+    }
 
 
 def _session_export_glyphs(session_payload: dict) -> list[dict[str, str]]:
@@ -501,15 +633,12 @@ def generate_fontsketch_alphabet_batch(args: dict, **kwargs) -> str:
     secondary_seed = seed_references[1]
     approved_run = _load_run(latest_run_id)
     approved_character = _normalize_letter(approved_run.get("target_character", session_payload.get("target_character", "F")), "F")
-    next_targets = [_next_alphabet_character(approved_character)]
-    next_targets.append(_next_alphabet_character(next_targets[-1]))
-    next_targets.append(_next_alphabet_character(next_targets[-1]))
-    next_targets.extend(AI_GENERATED_EXTRA_GLYPHS)
+    next_targets = _configured_batch_targets(approved_character)
     _patch_session(
         session_id,
         {
             "status": "generating_batch",
-            "instruction": "I am now generating the rest of the alphabet.",
+            "instruction": "I am now generating the full set of characters.",
             "selected_revision_characters": [],
             "pending_revision_characters": [],
         },
@@ -530,7 +659,8 @@ def generate_fontsketch_alphabet_batch(args: dict, **kwargs) -> str:
     try:
         items: list[dict | None] = [None] * len(next_targets)
         errors: list[str] = []
-        max_workers = min(ALPHABET_BATCH_MAX_PARALLEL, max(1, len(next_targets)))
+        configured_parallelism = int(_load_jumpfoundry_app_config().get("alphabetBatchMaxParallel") or DEFAULT_ALPHABET_BATCH_MAX_PARALLEL)
+        max_workers = min(max(1, configured_parallelism), max(1, len(next_targets)))
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="fontsketch-alphabet") as executor:
             future_map = {
                 executor.submit(generate_target, target_character): (index, target_character)
@@ -817,25 +947,18 @@ def set_fontsketch_font_name(args: dict, **kwargs) -> str:
 
     session_id = session_payload["session_id"]
     try:
-        updated_payload = _patch_session(
+        _patch_session(
             session_id,
             {
                 "font_name": font_name,
-                "status": "awaiting_font_name",
-                "instruction": f'I saved the name "{font_name}". Next I will compile the font file.',
+                "status": "building_font",
+                "instruction": f'I saved the name "{font_name}". I am compiling the font file now.',
             },
         )
     except urllib.error.URLError as exc:
         return json.dumps({"error": f"Failed to save JumpFoundry font name: {exc}"})
 
-    return json.dumps(
-        {
-            "session_id": session_id,
-            "status": updated_payload.get("status", "awaiting_font_name"),
-            "instruction": updated_payload.get("instruction", ""),
-            "font_name": font_name,
-        }
-    )
+    return json.dumps(_build_font_preview_for_session(session_id, font_name))
 
 
 def build_fontsketch_font(args: dict, **kwargs) -> str:
@@ -843,49 +966,10 @@ def build_fontsketch_font(args: dict, **kwargs) -> str:
     if not font_name:
         return json.dumps({"error": "A non-empty font_name is required."})
 
-    session_payload = _read_full_session((args.get("session_id") or "").strip())
-    if session_payload.get("error"):
-        return json.dumps(session_payload)
-
-    session_id = session_payload["session_id"]
-    glyphs = session_payload.get("normalized_glyphs", []) or _session_export_glyphs(session_payload)
-    if not glyphs:
-        return json.dumps({"error": "No normalized JumpFoundry glyphs are available to build the font yet."})
-
-    _patch_session(
-        session_id,
-        {
-            "font_name": font_name,
-            "status": "building_font",
-            "instruction": f'I am compiling "{font_name}" into a font file now.',
-        },
-    )
-    try:
-        font_bytes = _binary_request(
-            f"{BACKEND_BASE_URL}/api/v1/export-partial-font",
-            payload={"session_id": session_id, "glyphs": glyphs},
-            timeout=120.0,
-        )
-    except urllib.error.URLError as exc:
-        return json.dumps({"error": f"Failed to build the JumpFoundry font: {exc}"})
-
-    font_data_url = f"data:font/ttf;base64,{base64.b64encode(font_bytes).decode('ascii')}"
-    updated_payload = _patch_session(
-        session_id,
-        {
-            "font_name": font_name,
-            "font_file_data_url": font_data_url,
-            "normalized_glyphs": glyphs,
-            "status": "preview_requested",
-            "instruction": f'I am opening the final preview for "{font_name}" now.',
-        },
-    )
-    return json.dumps(
-        {
-            "session_id": session_id,
-            "status": updated_payload.get("status", "preview_requested"),
-            "instruction": updated_payload.get("instruction", ""),
-            "font_name": font_name,
-            "font_bytes": len(font_bytes),
-        }
-    )
+    session_id = (args.get("session_id") or "").strip()
+    if not session_id:
+        session_payload = _read_full_session("")
+        if session_payload.get("error"):
+            return json.dumps(session_payload)
+        session_id = session_payload["session_id"]
+    return json.dumps(_build_font_preview_for_session(session_id, font_name))

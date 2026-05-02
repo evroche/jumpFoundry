@@ -11,7 +11,10 @@ from PIL import Image
 
 
 Point = tuple[float, float]
-DETERMINISTIC_PUNCTUATION_GLYPHS = {".", ",", "'", "\"", "*"}
+DETERMINISTIC_PUNCTUATION_GLYPHS = {"^", "*", ":", ";", ".", ",", "'", "\""}
+# These glyphs should keep their original vertical placement in the 1024 frame
+# instead of being cropped to their ink bounds and scaled like letters.
+FRAME_PRESERVING_PUNCTUATION_GLYPHS = DETERMINISTIC_PUNCTUATION_GLYPHS | {"-", "?"}
 
 
 def build_outline_svg_zip(glyphs: list[dict[str, str]]) -> bytes:
@@ -128,7 +131,7 @@ def normalize_glyph_image_data_url(
         return f"data:image/png;base64,{encoded}"
 
     left, top, right, bottom = bbox
-    preserve_vertical_frame = character in DETERMINISTIC_PUNCTUATION_GLYPHS
+    preserve_vertical_frame = character in FRAME_PRESERVING_PUNCTUATION_GLYPHS
     if preserve_vertical_frame:
         cropped = image.crop((left, 0, right + 1, image.height))
     else:
@@ -143,6 +146,10 @@ def normalize_glyph_image_data_url(
     max_width = float(canvas_size)
     max_height = float(canvas_size if preserve_vertical_frame else max(canvas_size - bottom_padding, 1))
     scale = min(max_width / crop_width, max_height / crop_height)
+    if preserve_vertical_frame:
+        # Punctuation assets and short marks like hyphen should not be enlarged
+        # to fill the whole em box during normalization.
+        scale = min(scale, 1.0)
     rendered_width = max(1, int(round(crop_width * scale)))
     rendered_height = max(1, int(round(crop_height * scale)))
 

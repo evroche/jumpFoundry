@@ -93,9 +93,10 @@ class GenerationOrchestrator:
 
         analysis_path = run_dir / "kimi" / "analysis.json"
         provider_path = run_dir / "generated" / "provider_response.json"
-        generated_path = run_dir / "generated" / f"{target_character.upper()}.png"
-        interpreted_vector_path = run_dir / "vector" / f"{target_character.upper()}_centerline.svg.txt"
-        final_render_path = run_dir / "vector" / f"{target_character.upper()}_final.png.txt"
+        safe_target_stem = self._safe_glyph_file_stem(target_character)
+        generated_path = run_dir / "generated" / f"{safe_target_stem}.png"
+        interpreted_vector_path = run_dir / "vector" / f"{safe_target_stem}_centerline.svg.txt"
+        final_render_path = run_dir / "vector" / f"{safe_target_stem}_final.png.txt"
         manifest_path = run_dir / "manifest.json"
 
         write_json(provider_path, provider_response)
@@ -260,6 +261,48 @@ class GenerationOrchestrator:
     def _normalize_reference_name(filename: str) -> str:
         suffix = Path(filename).suffix or ".png"
         return f"reference_glyph{suffix}"
+
+    @staticmethod
+    def _safe_glyph_file_stem(character: str) -> str:
+        normalized = (character[:1] or "_").upper()
+        if normalized.isalnum():
+            return normalized
+
+        named = {
+            "!": "EXCLAMATION",
+            "\"": "DOUBLE_QUOTE",
+            "#": "HASH",
+            "$": "DOLLAR",
+            "%": "PERCENT",
+            "&": "AMPERSAND",
+            "'": "APOSTROPHE",
+            "(": "LEFT_PAREN",
+            ")": "RIGHT_PAREN",
+            "*": "ASTERISK",
+            "+": "PLUS",
+            ",": "COMMA",
+            "-": "HYPHEN",
+            ".": "PERIOD",
+            "/": "FORWARD_SLASH",
+            ":": "COLON",
+            ";": "SEMICOLON",
+            "<": "LESS_THAN",
+            "=": "EQUALS",
+            ">": "GREATER_THAN",
+            "?": "QUESTION",
+            "@": "AT",
+            "[": "LEFT_BRACKET",
+            "\\": "BACK_SLASH",
+            "]": "RIGHT_BRACKET",
+            "^": "CARET",
+            "_": "UNDERSCORE",
+            "`": "BACKTICK",
+            "{": "LEFT_BRACE",
+            "|": "PIPE",
+            "}": "RIGHT_BRACE",
+            "~": "TILDE",
+        }
+        return named.get(normalized, f"U{ord(normalized):04X}")
 
     def _load_previous_generated_image(self, previous_run_id: str) -> bytes | None:
         run_dir = self.storage.runs_dir / previous_run_id

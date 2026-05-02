@@ -48,7 +48,8 @@ START_FONTSKETCH_SESSION = {
     "description": (
         "Create a new local JumpFoundry session and open the browser. "
         "Use when the user wants to create a font using JumpFoundry. "
-        "After calling this tool, Hermes should use the returned startup_message verbatim instead of paraphrasing it."
+        "After calling this tool, Hermes should respond with the returned startup_message exactly as written. "
+        "Do not paraphrase it, add extra advice, mention past sessions, or append phrases like 'let me know when you're done.'"
     ),
     "parameters": {
         "type": "object",
@@ -199,8 +200,9 @@ NORMALIZE_FONTSKETCH_GLYPHS = {
 SET_FONTSKETCH_FONT_NAME = {
     "name": "set_font_name",
     "description": (
-        "Save the user's chosen font name for the current JumpFoundry session and open the final preview. "
-        "Use when JumpFoundry asks what name to give the font."
+        "Save the user's chosen font name for the current JumpFoundry session and immediately prepare the final preview. "
+        "Use when JumpFoundry asks what name to give the font. "
+        "Do not manually navigate or inspect the browser after this tool; the app handles the preview flow."
     ),
     "parameters": {
         "type": "object",
@@ -223,7 +225,9 @@ SET_FONTSKETCH_FONT_NAME = {
 BUILD_FONTSKETCH_FONT = {
     "name": "build_font_file",
     "description": (
-        "Compile the normalized JumpFoundry glyphs into a downloadable font file for the current session."
+        "Compile the normalized JumpFoundry glyphs into a downloadable font file for the current session. "
+        "This is mainly a legacy fallback because `set_font_name` already prepares the final preview. "
+        "After this tool completes, do not use browser navigation, clicking, or snapshot tools; wait for the user."
     ),
     "parameters": {
         "type": "object",

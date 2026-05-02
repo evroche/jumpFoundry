@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JumpFoundry Font Preview</title>
+    <link rel="stylesheet" href="./src/fontPreview.css" />
+    <script type="module" src="./src/fontPreview.js"></script>
+  </head>
+  <body>
+    <main class="font-preview-shell">
+      <header class="font-preview-nav" aria-label="Preview navigation">
+        <div class="font-preview-nav-copy" data-font-preview-nav>
+          <span>Lorem</span>
+          <span>Ipsum</span>
+          <span>Dolor</span>
+          <span>Sit</span>
+          <span>Amet</span>
+        </div>
+        <span class="font-preview-nav-file" data-font-preview-nav-file>Click Me</span>
+      </header>
+
+      <section class="font-preview-hero">
+        <div class="font-preview-headline-block">
+          <h1
+            class="font-preview-headline-copy"
+            data-font-preview-target="headline-copy"
+            data-font-preview-headline
+          >
+            Made with Hermes &amp; Kimi
+          </h1>
+          <p class="font-preview-subcopy">
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+          </p>
+        </div>
+
+        <div class="font-preview-footer">
+          <button
+            type="button"
+            class="font-preview-cta"
+            data-font-preview-cta
+            aria-label="Click me"
+          >
+            <span class="font-preview-cta-label" data-font-preview-cta-label>Click Me</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="font-preview-gallery" aria-label="Placeholder gallery">
+        <div class="font-preview-gallery-grid">
+          <article class="font-preview-gallery-item">
+            <div class="font-preview-gallery-image" aria-hidden="true"></div>
+            <p class="font-preview-gallery-caption">Lorem ipsum dolor sit amet.</p>
+          </article>
+          <article class="font-preview-gallery-item">
+            <div class="font-preview-gallery-image" aria-hidden="true"></div>
+            <p class="font-preview-gallery-caption">Consectetur adipiscing elit.</p>
+          </article>
+          <article class="font-preview-gallery-item">
+            <div class="font-preview-gallery-image" aria-hidden="true"></div>
+            <p class="font-preview-gallery-caption">Sed do eiusmod tempor.</p>
+          </article>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

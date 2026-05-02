@@ -35,6 +35,7 @@ import {
   type SkeletonPreviewResponse,
   type SessionResponse,
 } from "./lib/api";
+import { appConfig } from "./config";
 
 const SESSION_CANVAS_SIZE = 720;
 const BATCH_RENDER_BRUSH_STEP = 6;
@@ -46,16 +47,16 @@ const BRUSH_OPTIONS = [
 const MIN_RENDER_BRUSH_SIZE = 4;
 const MAX_RENDER_BRUSH_SIZE = 144;
 const BATCH_SLIDER_MIN_RENDER_BRUSH_SIZE = 18;
-const BATCH_SLIDER_MAX_RENDER_BRUSH_SIZE = 84;
+const BATCH_SLIDER_MAX_RENDER_BRUSH_SIZE = 60;
 const FINAL_RENDER_BRUSH_SCALE = 2;
 const FIRST_SEED_CHARACTER = "E";
 const SECOND_SEED_CHARACTER = "S";
 const SAMPLE_REVIEW_CHARACTER_OFFSET = 8;
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-const AI_GENERATED_EXTRA_GLYPHS = ["\\"] as const;
-const DETERMINISTIC_PUNCTUATION_GLYPHS = [".", ",", "'", "\"", "*"] as const;
-const EXTRA_GLYPHS = [...AI_GENERATED_EXTRA_GLYPHS, ...DETERMINISTIC_PUNCTUATION_GLYPHS] as const;
-const GLYPH_GRID_ORDER = [...ALPHABET, ...EXTRA_GLYPHS];
+const DIGIT_GLYPHS = "0123456789".split("");
+const PUNCTUATION_GLYPHS = ["!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "-", ":", ";", "/", "?", "\"", "'", ".", ","] as const;
+const DETERMINISTIC_PUNCTUATION_GLYPHS = ["^", "*", ":", ";", "\"", "'", ".", ","] as const;
+const GLYPH_GRID_ORDER = [...ALPHABET, ...DIGIT_GLYPHS, ...PUNCTUATION_GLYPHS];
 
 type PreviewWeightKey = "light" | "regular" | "medium" | "bold";
 
@@ -65,10 +66,10 @@ const PREVIEW_WEIGHT_DEFINITIONS: Array<{
   weightClass: number;
   brushOffsetSteps: number;
 }> = [
-  { key: "light", label: "300", weightClass: 300, brushOffsetSteps: -4 },
-  { key: "regular", label: "400", weightClass: 400, brushOffsetSteps: -2 },
+  { key: "light", label: "300", weightClass: 300, brushOffsetSteps: -2 },
+  { key: "regular", label: "400", weightClass: 400, brushOffsetSteps: -1 },
   { key: "medium", label: "600", weightClass: 600, brushOffsetSteps: 0 },
-  { key: "bold", label: "700", weightClass: 700, brushOffsetSteps: 4 },
+  { key: "bold", label: "700", weightClass: 700, brushOffsetSteps: 2 },
 ];
 
 type SeedReference = {
@@ -108,16 +109,18 @@ export default function App() {
   const [loadingMessage, setLoadingMessage] = useState("");
   const [pendingHermesConfirm, setPendingHermesConfirm] = useState<PendingHermesConfirm | null>(null);
   const [postBatchStage, setPostBatchStage] = useState<"grid" | "preview">("grid");
-  const [previewText, setPreviewText] = useState("the quick brown fox jumps over the lazy dog");
+  const [previewText, setPreviewText] = useState('the quick brown fox jumps over the lazy dog 0123456789 !@#$%^&*()-:;/?"\'.,');
   const [previewFontSizeOffset, setPreviewFontSizeOffset] = useState(0);
   const [previewFontBlob, setPreviewFontBlob] = useState<Blob | null>(null);
   const [previewFontBlobs, setPreviewFontBlobs] = useState<Partial<Record<PreviewWeightKey, Blob>>>({});
   const [previewFontVariants, setPreviewFontVariants] = useState<FontVariantExportItem[]>([]);
   const [previewFontPackageBlob, setPreviewFontPackageBlob] = useState<Blob | null>(null);
+  const [isDownloadingFont, setIsDownloadingFont] = useState(false);
   const [previewWeightKey, setPreviewWeightKey] = useState<PreviewWeightKey>("medium");
   const [seedReferences, setSeedReferences] = useState<SeedReference[]>([]);
   const [selectedBatchLetters, setSelectedBatchLetters] = useState<string[]>([]);
   const [pendingBatchLetters, setPendingBatchLetters] = useState<string[]>([]);
+  const [awaitingBatchHydrationLetters, setAwaitingBatchHydrationLetters] = useState<string[]>([]);
   const [normalizedExportGlyphs, setNormalizedExportGlyphs] = useState<GlyphOutlineExportItem[]>([]);
   const [seedVectorImages, setSeedVectorImages] = useState<Record<string, string>>({});
   const [seedFinalRenderImages, setSeedFinalRenderImages] = useState<Record<string, string>>({});
@@ -125,6 +128,7 @@ export default function App() {
   const [brushSize, setBrushSize] = useState(16);
   const [batchRenderBrushSize, setBatchRenderBrushSize] = useState(16);
   const [batchAdjustedFinalImages, setBatchAdjustedFinalImages] = useState<Record<string, string>>({});
+  const [hydratedBatchFinalImagesSignature, setHydratedBatchFinalImagesSignature] = useState("");
   const [drawStageTab, setDrawStageTab] = useState<"draw" | "vector" | "skeleton">("draw");
   const [reviewTab, setReviewTab] = useState<"skeleton" | "vector" | "final">("final");
   const [batchViewTab, setBatchViewTab] = useState<"art" | "vector" | "final">("final");
@@ -142,7 +146,7 @@ export default function App() {
   const hydratingRunIdRef = useRef("");
   const isAwaitingEditPrompt = session?.status === "awaiting_hermes_edit_prompt";
   const isAwaitingFontName = session?.status === "awaiting_font_name";
-  const isSessionWorking = Boolean(session && isWorkingSessionStatus(session.status));
+  const isSessionWorking = Boolean(session && isWorkingSessionStatus(session.status) && postBatchStage !== "preview");
   const sessionBatchRunIdsSignature = JSON.stringify(session?.batch_run_ids ?? []);
   const hydratedBatchRunIdsSignature = JSON.stringify(batchResult?.items.map((item) => item.run_id) ?? []);
   const isInlineBatchRevision = Boolean(
@@ -155,7 +159,7 @@ export default function App() {
     isAwaitingFontName &&
     postBatchStage !== "preview"
   );
-  const shouldShowWorkingLoader = !isInlineBatchRevision && Boolean(
+  const shouldShowWorkingLoader = !isInlineBatchRevision && postBatchStage !== "preview" && Boolean(
     loadingMessage ||
     isSubmitting ||
     pendingHermesConfirm ||
@@ -205,6 +209,9 @@ export default function App() {
   );
   const seedVectorSignature = JSON.stringify(seedVectorImages);
   const batchAdjustedFinalImagesSignature = JSON.stringify(batchAdjustedFinalImages);
+  const effectivePendingBatchLetters = Array.from(
+    new Set([...pendingBatchLetters, ...awaitingBatchHydrationLetters].map(normalizeLetter)),
+  );
   const normalizedGlyphMap = new Map(
     normalizedExportGlyphs.map((glyph) => [normalizeLetter(glyph.character), glyph.image_data_url]),
   );
@@ -212,7 +219,7 @@ export default function App() {
   const batchGridItems = GLYPH_GRID_ORDER.map((character) => {
     const normalizedCharacter = normalizeLetter(character);
     const normalizedImageUrl = normalizedGlyphMap.get(normalizedCharacter) ?? "";
-    const isPending = pendingBatchLetters.includes(normalizedCharacter);
+    const isPending = effectivePendingBatchLetters.includes(normalizedCharacter);
     const builtinPunctuation = builtinPunctuationGlyphs[normalizedCharacter];
     const seedReference = seedReferences.find((reference) => normalizeLetter(reference.character) === normalizedCharacter);
     const generatedItem = batchItems.find((item) => normalizeLetter(item.target_character) === normalizedCharacter);
@@ -262,7 +269,7 @@ export default function App() {
   });
   const batchFinalGridItems = GLYPH_GRID_ORDER.map((character) => {
     const normalizedCharacter = normalizeLetter(character);
-    const isPending = pendingBatchLetters.includes(normalizedCharacter);
+    const isPending = effectivePendingBatchLetters.includes(normalizedCharacter);
     const builtinPunctuation = builtinPunctuationGlyphs[normalizedCharacter];
     const seedReference = seedReferences.find((reference) => normalizeLetter(reference.character) === normalizedCharacter);
     const generatedItem = batchItems.find((item) => normalizeLetter(item.target_character) === normalizedCharacter);
@@ -312,7 +319,7 @@ export default function App() {
   });
   const batchVectorGridItems = GLYPH_GRID_ORDER.map((character) => {
     const normalizedCharacter = normalizeLetter(character);
-    const isPending = pendingBatchLetters.includes(normalizedCharacter);
+    const isPending = effectivePendingBatchLetters.includes(normalizedCharacter);
     const builtinPunctuation = builtinPunctuationGlyphs[normalizedCharacter];
     const seedReference = seedReferences.find((reference) => normalizeLetter(reference.character) === normalizedCharacter);
     const generatedItem = batchItems.find((item) => normalizeLetter(item.target_character) === normalizedCharacter);
@@ -511,7 +518,7 @@ export default function App() {
     return () => {
       isActive = false;
     };
-  }, [sessionId]);
+  }, [sessionId, postBatchStage]);
 
   useEffect(() => {
     if (!session) {
@@ -600,22 +607,34 @@ export default function App() {
     }
 
     let isActive = true;
+    const applySessionUpdate = (nextSession: SessionResponse) => {
+      if (!isActive) {
+        return;
+      }
+      setSession((current) => {
+        if (!current) {
+          return nextSession;
+        }
+        if (postBatchStage === "preview") {
+          return {
+            ...current,
+            font_name: nextSession.font_name || current.font_name,
+            font_file_data_url: nextSession.font_file_data_url || current.font_file_data_url,
+            normalized_glyphs: nextSession.normalized_glyphs?.length ? nextSession.normalized_glyphs : current.normalized_glyphs,
+            export_glyph_overrides: nextSession.export_glyph_overrides?.length
+              ? nextSession.export_glyph_overrides
+              : current.export_glyph_overrides,
+          };
+        }
+        if (JSON.stringify(current) === JSON.stringify(nextSession)) {
+          return current;
+        }
+        return nextSession;
+      });
+    };
     const intervalId = window.setInterval(() => {
       void fetchSession(sessionId)
-        .then((nextSession) => {
-          if (!isActive) {
-            return;
-          }
-          setSession((current) => {
-            if (!current) {
-              return nextSession;
-            }
-            if (JSON.stringify(current) === JSON.stringify(nextSession)) {
-              return current;
-            }
-            return nextSession;
-          });
-        })
+        .then(applySessionUpdate)
         .catch(() => {
           // Ignore polling errors; the next tick can recover.
         });
@@ -808,15 +827,42 @@ export default function App() {
           ? (session.selected_revision_characters ?? [])
           : []
     ).map(normalizeLetter);
+    const resolvedLetters = pendingBatchLetters.filter((character) => !nextPendingLetters.includes(character));
     setPendingBatchLetters((current) => (
       JSON.stringify(current) === JSON.stringify(nextPendingLetters) ? current : nextPendingLetters
     ));
+    if (resolvedLetters.length > 0) {
+      setAwaitingBatchHydrationLetters((current) => Array.from(new Set([...current, ...resolvedLetters])));
+    }
     if (nextPendingLetters.length > 0) {
       setSelectedBatchLetters((current) =>
         current.filter((character) => !nextPendingLetters.includes(normalizeLetter(character))),
       );
+      setAwaitingBatchHydrationLetters((current) =>
+        current.filter((character) => !nextPendingLetters.includes(normalizeLetter(character))),
+      );
     }
-  }, [session?.pending_revision_characters, session?.selected_revision_characters, session?.status]);
+  }, [session?.pending_revision_characters, session?.selected_revision_characters, session?.status, pendingBatchLetters]);
+
+  useEffect(() => {
+    if (!batchResult) {
+      setAwaitingBatchHydrationLetters([]);
+      return;
+    }
+    const isHydratedToCurrentRuns = sessionBatchRunIdsSignature === hydratedBatchRunIdsSignature;
+    const isHydratedToCurrentFinals = hydratedBatchFinalImagesSignature === `${batchVectorSourceSignature}|${batchRenderBrushSize}`;
+    if (!isHydratedToCurrentRuns || !isHydratedToCurrentFinals) {
+      return;
+    }
+    setAwaitingBatchHydrationLetters([]);
+  }, [
+    batchResult,
+    sessionBatchRunIdsSignature,
+    hydratedBatchRunIdsSignature,
+    hydratedBatchFinalImagesSignature,
+    batchVectorSourceSignature,
+    batchRenderBrushSize,
+  ]);
 
   useEffect(() => {
     if (
@@ -896,6 +942,17 @@ export default function App() {
         if (!current) {
           return nextSession;
         }
+        if (postBatchStage === "preview") {
+          return {
+            ...current,
+            font_name: nextSession.font_name || current.font_name,
+            font_file_data_url: nextSession.font_file_data_url || current.font_file_data_url,
+            normalized_glyphs: nextSession.normalized_glyphs?.length ? nextSession.normalized_glyphs : current.normalized_glyphs,
+            export_glyph_overrides: nextSession.export_glyph_overrides?.length
+              ? nextSession.export_glyph_overrides
+              : current.export_glyph_overrides,
+          };
+        }
         if (JSON.stringify(current) === JSON.stringify(nextSession)) {
           return current;
         }
@@ -920,7 +977,7 @@ export default function App() {
     return () => {
       window.clearInterval(interval);
     };
-  }, [sessionId, isSubmitting, session?.status]);
+  }, [sessionId, isSubmitting, session?.status, postBatchStage]);
 
   useEffect(() => {
     if (!drawingData) {
@@ -1096,6 +1153,7 @@ export default function App() {
   useEffect(() => {
     if (!batchResult) {
       setBatchAdjustedFinalImages({});
+      setHydratedBatchFinalImagesSignature("");
       return;
     }
 
@@ -1109,10 +1167,12 @@ export default function App() {
 
     if (vectorSources.size === 0) {
       setBatchAdjustedFinalImages({});
+      setHydratedBatchFinalImagesSignature("");
       return;
     }
 
     let isActive = true;
+    const nextSignature = `${batchVectorSourceSignature}|${batchRenderBrushSize}`;
     void Promise.all(
       Array.from(vectorSources.entries()).map(async ([character, dataUrl]) => {
         const trace = parseVectorSvgDataUrl(dataUrl);
@@ -1135,12 +1195,14 @@ export default function App() {
         setBatchAdjustedFinalImages(
           Object.fromEntries(entries.filter(([, imageUrl]) => Boolean(imageUrl))),
         );
+        setHydratedBatchFinalImagesSignature(nextSignature);
       })
       .catch(() => {
         if (!isActive) {
           return;
         }
         setBatchAdjustedFinalImages({});
+        setHydratedBatchFinalImagesSignature("");
       });
 
     return () => {
@@ -1545,7 +1607,7 @@ export default function App() {
 
     try {
       const approvedCharacter = result.target_character;
-      const nextTargets = [...nextAlphabetCharacters(approvedCharacter, 3), ...AI_GENERATED_EXTRA_GLYPHS];
+      const nextTargets = configuredAlphabetBatchTargets(approvedCharacter);
       const items: RunResponse[] = [];
       const primarySeed = seedReferences[0];
       const secondarySeed = seedReferences[1];
@@ -1594,7 +1656,7 @@ export default function App() {
         target_character: nextTargets[0] ?? nextAlphabetCharacter(approvedCharacter),
         status: "ready",
         stage: "review",
-        instruction: "I generated the next set of letters. If you'd like changes, select the letters you'd like to revise and let me know when you're ready.",
+        instruction: "I generated the full set of characters. If you'd like changes, select the letters you'd like to revise and press redo. If everything looks good, approve it and I'll move on.",
         selected_revision_characters: [],
         batch_run_ids: items.map((item) => item.run_id),
         pending_revision_characters: [],
@@ -1643,7 +1705,7 @@ export default function App() {
       return;
     }
 
-    setIsSubmitting(true);
+    setIsDownloadingFont(true);
     setErrorMessage("");
 
     try {
@@ -1658,7 +1720,7 @@ export default function App() {
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Unknown error");
     } finally {
-      setIsSubmitting(false);
+      setIsDownloadingFont(false);
     }
   }
 
@@ -1719,7 +1781,7 @@ export default function App() {
   }
 
   function toggleBatchLetterSelection(character: string) {
-    if (pendingBatchLetters.includes(character)) {
+    if (effectivePendingBatchLetters.includes(character)) {
       return;
     }
     setSelectedBatchLetters((current) =>
@@ -2113,6 +2175,7 @@ export default function App() {
                       className="session-font-download-chip session-font-preview-action-button"
                       onClick={handleExportPartialFont}
                       aria-label="Download Font"
+                      disabled={isDownloadingFont}
                     >
                       <span className="session-font-download-chip-label">{previewDownloadName}</span>
                       <span
@@ -2465,7 +2528,15 @@ async function buildFinalGlyphOverridesForBrushSize(
       if (!trace) {
         return [character, ""] as const;
       }
-      const finalImageDataUrl = await renderBrushPreview(trace, brushSize, sourceCanvasSize);
+      const preserveFrame = DETERMINISTIC_PUNCTUATION_GLYPHS.includes(
+        normalizeLetter(character) as typeof DETERMINISTIC_PUNCTUATION_GLYPHS[number],
+      );
+      const finalImageDataUrl = await renderBrushPreview(
+        trace,
+        brushSize,
+        sourceCanvasSize,
+        !preserveFrame,
+      );
       return [character, finalImageDataUrl] as const;
     }),
   );
@@ -2496,6 +2567,52 @@ function previousAlphabetCharacter(character: string): string {
 function normalizeLetter(value: string): string {
   const next = value.toUpperCase().slice(0, 1);
   return next || FIRST_SEED_CHARACTER;
+}
+
+function glyphSequenceCharacterOffset(character: string, steps: number): string {
+  const normalized = normalizeLetter(character);
+  const currentIndex = GLYPH_GRID_ORDER.indexOf(normalized);
+  const startIndex = currentIndex >= 0 ? currentIndex : 0;
+  const sequenceLength = GLYPH_GRID_ORDER.length;
+  if (sequenceLength === 0) {
+    return FIRST_SEED_CHARACTER;
+  }
+  const normalizedSteps = ((steps % sequenceLength) + sequenceLength) % sequenceLength;
+  return GLYPH_GRID_ORDER[(startIndex + normalizedSteps) % sequenceLength];
+}
+
+function configuredLiteBatchTargets(character: string): string[] {
+  const items: string[] = [];
+  const normalized = normalizeLetter(character);
+  const desiredCount = Math.max(0, Math.floor(appConfig.alphabetLiteCount));
+  let step = Math.max(0, Math.floor(appConfig.alphabetLiteStartOffset));
+  let attempts = 0;
+
+  while (items.length < desiredCount && attempts < GLYPH_GRID_ORDER.length * 2) {
+    const target = glyphSequenceCharacterOffset(normalized, step);
+    const isDeterministicPunctuation = DETERMINISTIC_PUNCTUATION_GLYPHS.includes(
+      target as typeof DETERMINISTIC_PUNCTUATION_GLYPHS[number],
+    );
+    if (target !== normalized && !isDeterministicPunctuation && !items.includes(target)) {
+      items.push(target);
+    }
+    step += 1;
+    attempts += 1;
+  }
+
+  return items;
+}
+
+function configuredAlphabetBatchTargets(character: string): string[] {
+  const normalized = normalizeLetter(character);
+  if (appConfig.alphabetGenerationMode === "lite") {
+    return configuredLiteBatchTargets(normalized);
+  }
+  return GLYPH_GRID_ORDER.filter(
+    (glyph) =>
+      glyph !== normalized &&
+      !DETERMINISTIC_PUNCTUATION_GLYPHS.includes(glyph as typeof DETERMINISTIC_PUNCTUATION_GLYPHS[number]),
+  );
 }
 
 function glyphSortIndex(character: string): number {

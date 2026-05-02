@@ -15,8 +15,17 @@ ASCENT = 824
 DESCENT = -200
 SIDE_BEARING = 36
 TOP_PADDING = 24
-DETERMINISTIC_PUNCTUATION_GLYPHS = {".", ",", "'", "\"", "*"}
+DETERMINISTIC_PUNCTUATION_GLYPHS = {"^", "*", ":", ";", ".", ",", "'", "\""}
+CENTER_BAND_PUNCTUATION_GLYPHS = {":", ";"}
+FRAME_PRESERVING_PUNCTUATION_GLYPHS = (DETERMINISTIC_PUNCTUATION_GLYPHS - CENTER_BAND_PUNCTUATION_GLYPHS) | {"-", "?"}
 FULL_FRAME_GLYPH_HEIGHT = 1024
+PUNCTUATION_LAYOUT_OVERRIDES = {
+    "-": {"scale": 1.24, "anchor": "middle", "y_shift": 0.0},
+}
+CENTER_BAND_VERTICAL_PADDING = {
+    ":": 120.0,
+    ";": 120.0,
+}
 
 
 def build_font_package_zip(
@@ -57,8 +66,20 @@ def build_partial_ttf(
     for character, image_data_url in ordered_items:
         image_bytes, _ = decode_data_url(image_data_url)
         loops = raster_to_outline_loops(image_bytes)
-        if character in DETERMINISTIC_PUNCTUATION_GLYPHS:
+        if character in CENTER_BAND_PUNCTUATION_GLYPHS:
+            normalized_loops, width, height = normalize_outline_loops_center_band(
+                loops,
+                vertical_padding=CENTER_BAND_VERTICAL_PADDING.get(character, 120.0),
+            )
+        elif character in FRAME_PRESERVING_PUNCTUATION_GLYPHS:
             normalized_loops, width, height = normalize_outline_loops_preserve_vertical_frame(loops)
+            if character not in DETERMINISTIC_PUNCTUATION_GLYPHS:
+                normalized_loops, width, height = apply_punctuation_layout_override(
+                    character,
+                    normalized_loops,
+                    width,
+                    height,
+                )
         else:
             normalized_loops, width, height = normalize_outline_loops(loops)
         glyph_map[character] = _build_outline_glyph(normalized_loops, width, height)
@@ -160,6 +181,93 @@ def normalize_outline_loops_preserve_vertical_frame(
     normalized = [
         [(x - min_x, y) for x, y in loop]
         for loop in loops
+    ]
+    width = max_x - min_x
+    return normalized, width, source_height
+
+
+def normalize_outline_loops_center_band(
+    loops: list[list[tuple[float, float]]],
+    vertical_padding: float = 120.0,
+    source_height: float = FULL_FRAME_GLYPH_HEIGHT,
+) -> tuple[list[list[tuple[float, float]]], float, float]:
+    if not loops:
+        return [], 0.0, source_height
+
+    all_points = [point for loop in loops for point in loop]
+    min_x = min(point[0] for point in all_points)
+    max_x = max(point[0] for point in all_points)
+    min_y = min(point[1] for point in all_points)
+    max_y = max(point[1] for point in all_points)
+
+    band_top = max(0.0, min_y - vertical_padding)
+    band_bottom = min(source_height, max_y + vertical_padding)
+    band_height = max(1.0, band_bottom - band_top)
+
+    normalized = [
+        [(x - min_x, y - band_top) for x, y in loop]
+        for loop in loops
+    ]
+    width = max_x - min_x
+    return normalized, width, band_height
+
+
+def apply_punctuation_layout_override(
+    character: str,
+    loops: list[list[tuple[float, float]]],
+    source_width: float,
+    source_height: float,
+) -> tuple[list[list[tuple[float, float]]], float, float]:
+    override = PUNCTUATION_LAYOUT_OVERRIDES.get(character)
+    if not override or not loops:
+        return loops, source_width, source_height
+
+    scale = float(override.get("scale", 1.0))
+    if scale <= 1.0:
+        return loops, source_width, source_height
+
+    anchor_mode = str(override.get("anchor", "middle"))
+    y_shift_override = float(override.get("y_shift", 0.0))
+    original_points = [point for loop in loops for point in loop]
+    min_x = min(point[0] for point in original_points)
+    max_x = max(point[0] for point in original_points)
+    min_y = min(point[1] for point in original_points)
+    max_y = max(point[1] for point in original_points)
+
+    center_x = (min_x + max_x) / 2.0
+    if anchor_mode == "top":
+        anchor_y = min_y
+    elif anchor_mode == "bottom":
+        anchor_y = max_y
+    else:
+        anchor_y = (min_y + max_y) / 2.0
+
+    scaled = [
+        [
+            (
+                center_x + (x - center_x) * scale,
+                anchor_y + (y - anchor_y) * scale + y_shift_override,
+            )
+            for x, y in loop
+        ]
+        for loop in loops
+    ]
+
+    all_points = [point for loop in scaled for point in loop]
+    min_x = min(point[0] for point in all_points)
+    max_x = max(point[0] for point in all_points)
+    min_y = min(point[1] for point in all_points)
+    max_y = max(point[1] for point in all_points)
+
+    shift_y = 0.0
+    if min_y < 0:
+        shift_y = -min_y
+    elif max_y > source_height:
+        shift_y = source_height - max_y
+
+    normalized = [
+        [(x - min_x, y + shift_y) for x, y in loop]
+        for loop in scaled
     ]
     width = max_x - min_x
     return normalized, width, source_height

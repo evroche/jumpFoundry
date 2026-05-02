@@ -39,11 +39,17 @@ router = APIRouter()
 orchestrator = GenerationOrchestrator()
 storage = RunStorage()
 revision_jobs = AsyncRevisionJobService(storage=storage, orchestrator=orchestrator)
-AI_GENERATED_EXTRA_GLYPHS = {"\\"}
-DETERMINISTIC_PUNCTUATION_GLYPHS = {".", ",", "'", "\"", "*"}
-EXTRA_GLYPHS = AI_GENERATED_EXTRA_GLYPHS | DETERMINISTIC_PUNCTUATION_GLYPHS
-SUPPORTED_GLYPHS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ") | EXTRA_GLYPHS
+LETTER_GLYPHS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+DIGIT_GLYPHS = set("0123456789")
+AI_GENERATED_PUNCTUATION_GLYPHS = {"!", "@", "#", "$", "%", "&", "(", ")", "-", "/", "?"}
+DETERMINISTIC_PUNCTUATION_GLYPHS = {"^", "*", ":", ";", ".", ",", "'", "\""}
+LEGACY_EXTRA_GLYPHS = {"\\"}
+EXTRA_GLYPHS = AI_GENERATED_PUNCTUATION_GLYPHS | DETERMINISTIC_PUNCTUATION_GLYPHS | LEGACY_EXTRA_GLYPHS
+SUPPORTED_GLYPHS = LETTER_GLYPHS | DIGIT_GLYPHS | EXTRA_GLYPHS
 PUNCTUATION_ASSET_FILENAMES = {
+    "^": "caret.png",
+    ":": "colon.png",
+    ";": "semicolon.png",
     ".": "period.png",
     ",": "comma.png",
     "'": "apostrophe.png",
@@ -54,6 +60,9 @@ PUNCTUATION_FALLBACK_ASSET_FILENAMES = {
     '"': "doubleQuote.png",
 }
 PUNCTUATION_SOURCE_SCALE = {
+    "^": 0.68,
+    ":": 0.68,
+    ";": 0.68,
     ".": 0.68,
     ",": 0.68,
     "'": 0.68,
@@ -198,8 +207,11 @@ def _normalize_builtin_punctuation_image(character: str) -> bytes:
 
 def _build_builtin_punctuation_items() -> list[PunctuationGlyphPreviewItem]:
     items: list[PunctuationGlyphPreviewItem] = []
-    for character in [".", ",", "'", '"', "*"]:
-        image_bytes = _normalize_builtin_punctuation_image(character)
+    for character in ["^", "*", ":", ";", '"', "'", ".", ","]:
+        try:
+            image_bytes = _normalize_builtin_punctuation_image(character)
+        except FileNotFoundError:
+            continue
         interpreted_vector_data_url, final_render_data_url = vectorize_centerline_and_render(
             image_bytes,
             brush_size=16,
@@ -213,6 +225,8 @@ def _build_builtin_punctuation_items() -> list[PunctuationGlyphPreviewItem]:
                 final_render_data_url=final_render_data_url,
             )
         )
+    if not items:
+        raise FileNotFoundError(f"No built-in punctuation assets were found in {_assets_dir()}.")
     return items
 
 
