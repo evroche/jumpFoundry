@@ -147,9 +147,9 @@ class FontSessionResponse(BaseModel):
     frontend_url: str
     status: str = "ready"
     stage: Literal["draw", "skeleton_preview", "review"] = "draw"
-    instruction: str = "Start by drawing two sample letters. I'll use them to build the rest of your font.\n\nGo ahead and draw the first letter \"E\". Approve it when you're done."
-    source_character: str = "E"
-    target_character: str = "E"
+    instruction: str = "Start by drawing two sample letters. I'll use them to build the rest of your font.\n\nGo ahead and draw the first letter \"P\". Approve it when you're done."
+    source_character: str = "P"
+    target_character: str = "P"
     correction: str = ""
     latest_run_id: str = ""
     skeleton_image_data_url: str = ""

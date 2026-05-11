@@ -174,8 +174,8 @@ class AsyncRevisionJobService:
             secondary_seed = seed_references[1]
             primary_bytes = _data_url_to_bytes(primary_seed.get("image_data_url", ""))
             secondary_bytes = _data_url_to_bytes(secondary_seed.get("image_data_url", ""))
-            source_character = _normalize_letter(primary_seed.get("character", session.get("source_character", "E")), "E")
-            secondary_character = _normalize_letter(secondary_seed.get("character", session.get("target_character", "S")), "S")
+            source_character = _normalize_letter(primary_seed.get("character", session.get("source_character", "P")), "P")
+            secondary_character = _normalize_letter(secondary_seed.get("character", session.get("target_character", "U")), "U")
             brush_size = 16
 
             for character in target_characters:

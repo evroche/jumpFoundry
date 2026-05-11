@@ -340,7 +340,7 @@ def _multipart_generate_request(
     add_file("reference_glyph", "reference_glyph.png", "image/png", _data_url_to_bytes(primary_seed.get("image_data_url", "")))
     if secondary_seed and secondary_seed.get("image_data_url"):
         add_file("second_reference_glyph", "second_reference_glyph.png", "image/png", _data_url_to_bytes(secondary_seed.get("image_data_url", "")))
-        add_field("second_source_character", _normalize_letter(secondary_seed.get("character", "S"), "S"))
+        add_field("second_source_character", _normalize_letter(secondary_seed.get("character", "U"), "U"))
     add_field("source_character", source_character)
     add_field("target_character", target_character)
     add_field("correction", correction)
@@ -456,11 +456,11 @@ def start_fontsketch_session(args: dict, **kwargs) -> str:
     fallback_message = (
         f"I've opened up JumpFoundry in your browser:\n{frontend_url}\n\n"
         'Start by drawing two sample letters. I\'ll use them to build the rest of your font.\n\n'
-        'Go ahead and draw the first letter "E". Approve it when you\'re done.'
+        'Go ahead and draw the first letter "P". Approve it when you\'re done.'
         if frontend_url
         else
         'Start by drawing two sample letters. I\'ll use them to build the rest of your font.\n\n'
-        'Go ahead and draw the first letter "E". Approve it when you\'re done.'
+        'Go ahead and draw the first letter "P". Approve it when you\'re done.'
     )
 
     startup_message = message or fallback_message
@@ -548,10 +548,10 @@ def generate_fontsketch_review_glyph(args: dict, **kwargs) -> str:
 
     primary_seed = seed_references[0]
     secondary_seed = seed_references[1] if len(seed_references) > 1 else {
-        "character": session_payload.get("source_character", "S"),
+        "character": session_payload.get("source_character", "U"),
         "image_data_url": current_drawing,
     }
-    source_character = _normalize_letter(primary_seed.get("character", session_payload.get("source_character", "E")))
+    source_character = _normalize_letter(primary_seed.get("character", session_payload.get("source_character", "P")))
     target_character = _alphabet_character_offset(source_character, SAMPLE_REVIEW_CHARACTER_OFFSET)
     _patch_session(
         session_id,
@@ -594,7 +594,7 @@ def generate_fontsketch_review_glyph(args: dict, **kwargs) -> str:
                     "image_data_url": primary_seed.get("image_data_url", ""),
                 },
                 {
-                    "character": _normalize_letter(secondary_seed.get("character", session_payload.get("source_character", "S")), "S"),
+                    "character": _normalize_letter(secondary_seed.get("character", session_payload.get("source_character", "U")), "U"),
                     "image_data_url": secondary_seed.get("image_data_url", ""),
                 },
             ],
@@ -649,7 +649,7 @@ def generate_fontsketch_alphabet_batch(args: dict, **kwargs) -> str:
             session_id="",
             primary_seed=primary_seed,
             secondary_seed=secondary_seed,
-            source_character=_normalize_letter(primary_seed.get("character", "E")),
+            source_character=_normalize_letter(primary_seed.get("character", "P")),
             target_character=target_character,
             correction="",
             previous_run_id=latest_run_id,
@@ -863,7 +863,7 @@ def submit_fontsketch_revision(args: dict, **kwargs) -> str:
 
     primary_seed = seed_references[0]
     secondary_seed = seed_references[1]
-    source_character = _normalize_letter(primary_seed.get("character", session_payload.get("source_character", "E")))
+    source_character = _normalize_letter(primary_seed.get("character", session_payload.get("source_character", "P")))
     latest_run_id = (session_payload.get("latest_run_id") or "").strip()
 
     try:

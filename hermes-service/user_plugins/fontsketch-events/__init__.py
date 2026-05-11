@@ -10,10 +10,10 @@ PORT = 8765
 PATH = "/fontsketch-event"
 
 ALLOWED_EVENTS = {
-    "draw_confirmed": "done",
-    "single_glyph_approved": "done",
-    "alphabet_confirmed": "continue",
-    "alphabet_redo_requested": "I'm ready with some changes.",
+    "draw_confirmed": "draw_confirmed",
+    "single_glyph_approved": "single_glyph_approved",
+    "alphabet_confirmed": "alphabet_confirmed",
+    "alphabet_redo_requested": "alphabet_redo_requested",
 }
 
 ALLOWED_ORIGINS = {
@@ -28,9 +28,40 @@ _start_lock = threading.Lock()
 
 
 def _build_injected_message(event_type: str, payload: dict) -> str:
-    message = ALLOWED_EVENTS.get(event_type)
-    if message:
-        return message
+    if event_type == "draw_confirmed":
+        return (
+            "JumpFoundry hidden event: the user pressed Approve on the current draw step. "
+            "Read the current session state and continue immediately to the next workflow step. "
+            "Do not ask for another confirmation and do not tell the user to let you know when they are done."
+        )
+
+    if event_type == "single_glyph_approved":
+        approved_glyph = str(payload.get("approved_glyph") or "the current sample glyph")
+        return (
+            f"JumpFoundry hidden event: the user approved {approved_glyph}. "
+            "Continue immediately by generating the full alphabet board for review. "
+            "Do not ask an extra confirmation question and do not wait for the user to type continue."
+        )
+
+    if event_type == "alphabet_confirmed":
+        return (
+            "JumpFoundry hidden event: the user approved the alphabet board. "
+            "Continue immediately into the export and font-name flow that matches the current session state. "
+            "Do not ask the user to type continue."
+        )
+
+    if event_type == "alphabet_redo_requested":
+        selected = payload.get("selected_revision_characters") or []
+        selected_text = ", ".join(str(item) for item in selected if str(item).strip())
+        if selected_text:
+            return (
+                f"JumpFoundry hidden event: the user pressed Redo on the alphabet board with {selected_text} selected. "
+                "Ask what shared change should be applied to those selected glyphs."
+            )
+        return (
+            "JumpFoundry hidden event: the user pressed Redo on the alphabet board. "
+            "Ask what shared change should be applied to the currently selected glyphs."
+        )
 
     return (
         f"JumpFoundry event: {event_type}\n\n"

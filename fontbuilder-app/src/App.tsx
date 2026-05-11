@@ -49,14 +49,15 @@ const MAX_RENDER_BRUSH_SIZE = 144;
 const BATCH_SLIDER_MIN_RENDER_BRUSH_SIZE = 18;
 const BATCH_SLIDER_MAX_RENDER_BRUSH_SIZE = 60;
 const FINAL_RENDER_BRUSH_SCALE = 2;
-const FIRST_SEED_CHARACTER = "E";
-const SECOND_SEED_CHARACTER = "S";
+const FIRST_SEED_CHARACTER = "P";
+const SECOND_SEED_CHARACTER = "U";
 const SAMPLE_REVIEW_CHARACTER_OFFSET = 8;
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 const DIGIT_GLYPHS = "0123456789".split("");
 const PUNCTUATION_GLYPHS = ["!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "-", ":", ";", "/", "?", "\"", "'", ".", ","] as const;
 const DETERMINISTIC_PUNCTUATION_GLYPHS = ["^", "*", ":", ";", "\"", "'", ".", ","] as const;
 const GLYPH_GRID_ORDER = [...ALPHABET, ...DIGIT_GLYPHS, ...PUNCTUATION_GLYPHS];
+const DEFAULT_PREVIEW_FONT_SIZE_OFFSET = -30;
 
 type PreviewWeightKey = "light" | "regular" | "medium" | "bold";
 
@@ -110,7 +111,7 @@ export default function App() {
   const [pendingHermesConfirm, setPendingHermesConfirm] = useState<PendingHermesConfirm | null>(null);
   const [postBatchStage, setPostBatchStage] = useState<"grid" | "preview">("grid");
   const [previewText, setPreviewText] = useState('the quick brown fox jumps over the lazy dog 0123456789 !@#$%^&*()-:;/?"\'.,');
-  const [previewFontSizeOffset, setPreviewFontSizeOffset] = useState(0);
+  const [previewFontSizeOffset, setPreviewFontSizeOffset] = useState(DEFAULT_PREVIEW_FONT_SIZE_OFFSET);
   const [previewFontBlob, setPreviewFontBlob] = useState<Blob | null>(null);
   const [previewFontBlobs, setPreviewFontBlobs] = useState<Partial<Record<PreviewWeightKey, Blob>>>({});
   const [previewFontVariants, setPreviewFontVariants] = useState<FontVariantExportItem[]>([]);
@@ -154,6 +155,15 @@ export default function App() {
     session?.stage === "review" &&
     session?.status === "generating_batch"
   );
+  const isPreviewTransitionActive = Boolean(
+    sessionId &&
+    (
+      postBatchStage === "preview" ||
+      session?.status === "building_font" ||
+      session?.status === "preview_requested" ||
+      session?.font_file_data_url
+    ),
+  );
   const isWaitingForFontName = Boolean(
     sessionId &&
     isAwaitingFontName &&
@@ -164,7 +174,15 @@ export default function App() {
     isSubmitting ||
     pendingHermesConfirm ||
     isSessionWorking ||
-    isWaitingForFontName
+    isWaitingForFontName ||
+    isPreviewTransitionActive
+  );
+  const shouldRenderBatchGrid = Boolean(
+    batchResult &&
+    postBatchStage !== "preview" &&
+    !isPreviewTransitionActive &&
+    !isWaitingForFontName &&
+    pendingHermesConfirm?.kind !== "alphabet"
   );
   const isHydratingReviewRun = Boolean(
     sessionId &&
@@ -475,7 +493,7 @@ export default function App() {
     setPreviewFontVariants([]);
     setPreviewFontPackageBlob(null);
     setPreviewWeightKey("medium");
-    setPreviewFontSizeOffset(0);
+    setPreviewFontSizeOffset(DEFAULT_PREVIEW_FONT_SIZE_OFFSET);
     setPostBatchStage("grid");
     setReviewTab("final");
     setBatchViewTab("final");
@@ -518,7 +536,7 @@ export default function App() {
     return () => {
       isActive = false;
     };
-  }, [sessionId, postBatchStage]);
+  }, [sessionId]);
 
   useEffect(() => {
     if (!session) {
@@ -615,9 +633,16 @@ export default function App() {
         if (!current) {
           return nextSession;
         }
-        if (postBatchStage === "preview") {
+        if (
+          postBatchStage === "preview" ||
+          current.status === "building_font" ||
+          current.status === "preview_requested" ||
+          Boolean(current.font_file_data_url)
+        ) {
           return {
             ...current,
+            status: nextSession.status || current.status,
+            instruction: nextSession.instruction || current.instruction,
             font_name: nextSession.font_name || current.font_name,
             font_file_data_url: nextSession.font_file_data_url || current.font_file_data_url,
             normalized_glyphs: nextSession.normalized_glyphs?.length ? nextSession.normalized_glyphs : current.normalized_glyphs,
@@ -644,7 +669,7 @@ export default function App() {
       isActive = false;
       window.clearInterval(intervalId);
     };
-  }, [sessionId]);
+  }, [sessionId, postBatchStage]);
 
   useEffect(() => {
     if (!pendingHermesConfirm) {
@@ -942,9 +967,16 @@ export default function App() {
         if (!current) {
           return nextSession;
         }
-        if (postBatchStage === "preview") {
+        if (
+          postBatchStage === "preview" ||
+          current.status === "building_font" ||
+          current.status === "preview_requested" ||
+          Boolean(current.font_file_data_url)
+        ) {
           return {
             ...current,
+            status: nextSession.status || current.status,
+            instruction: nextSession.instruction || current.instruction,
             font_name: nextSession.font_name || current.font_name,
             font_file_data_url: nextSession.font_file_data_url || current.font_file_data_url,
             normalized_glyphs: nextSession.normalized_glyphs?.length ? nextSession.normalized_glyphs : current.normalized_glyphs,
@@ -1447,7 +1479,7 @@ export default function App() {
         await updateSession(sessionId, {
           source_character: SECOND_SEED_CHARACTER,
           target_character: sampleReviewCharacter(firstSeedCharacter),
-          instruction: 'I recorded your first letter. Now draw the letter "S".\n\nApprove it when you\'re done and I\'ll generate the first sample character for you to review.',
+          instruction: `I recorded your first letter. Now draw the letter "${SECOND_SEED_CHARACTER}".\n\nApprove it when you're done and I'll generate the first sample character for you to review.`,
           skeleton_image_data_url: "",
           current_drawing_image_data_url: "",
           status: "ready",
@@ -1764,6 +1796,8 @@ export default function App() {
 
     try {
       await preparePreviewFontAssets();
+      setPreviewFontSizeOffset(DEFAULT_PREVIEW_FONT_SIZE_OFFSET);
+      setPostBatchStage("preview");
       const nextSession = await updateSession(sessionId, {
         instruction: `Your font${session?.font_name ? ` "${session.font_name}"` : ""} is ready. Click the download button to download and install it on your computer.`,
         status: "ready",
@@ -1771,7 +1805,6 @@ export default function App() {
         selected_revision_characters: [],
       });
       setSession(nextSession);
-      setPostBatchStage("preview");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Unknown error");
     } finally {
@@ -2048,148 +2081,148 @@ export default function App() {
       <main className="page-shell page-shell-session">
         {sessionError ? <p className="error-text">{sessionError}</p> : null}
         {session ? (
-          shouldShowWorkingLoader ? (
-            <section className="session-loading-layout">
-              <div className="session-loading-pulse" role="status" aria-label="Loading" />
-            </section>
-          ) : batchResult ? (
+          postBatchStage === "preview" ? (
             <section className="session-review-layout">
-              {postBatchStage === "grid" ? (
-                <div className="session-stage-stack session-stage-stack-wide">
-                  <section className="session-review-frame session-batch-frame">
-                    {batchViewTabs}
-                    <div className="session-batch-grid">
-                      {(batchViewTab === "final"
-                        ? batchFinalGridItems
-                        : batchViewTab === "vector"
-                          ? batchVectorGridItems
-                          : batchGridItems).map((item) => (
-                        <div key={item.key} className="session-batch-cell">
-                          <button
-                            type="button"
-                            className={`session-batch-select${selectedBatchLetters.includes(item.character) ? " is-selected" : ""}${item.isPending ? " is-pending" : ""}`}
-                            aria-label={item.isPending ? `Revising ${item.character}` : `Select ${item.character}`}
-                            disabled={item.isPending}
-                            onClick={() => toggleBatchLetterSelection(item.character)}
-                          >
-                            <span className="session-batch-select-overlay" aria-hidden="true" />
-                          </button>
-                          {item.imageUrl && !item.isPending ? (
-                            <img className="session-batch-image" src={item.imageUrl} alt={item.alt} />
-                          ) : null}
-                        </div>
-                      ))}
+              <div className="session-stage-stack session-stage-stack-wide session-font-preview-stage">
+                <section className="session-review-frame session-font-preview-frame">
+                  <textarea
+                    ref={previewTextareaRef}
+                    className="session-font-preview-textarea"
+                    value={previewText}
+                    onChange={(event) => setPreviewText(event.target.value)}
+                    onBlur={(event) => {
+                      const textarea = event.currentTarget;
+                      const selectionStart = textarea.selectionStart ?? textarea.value.length;
+                      const selectionEnd = textarea.selectionEnd ?? selectionStart;
+                      window.requestAnimationFrame(() => {
+                        textarea.focus();
+                        textarea.setSelectionRange(selectionStart, selectionEnd);
+                      });
+                    }}
+                    style={{
+                      fontFamily: `"${previewFontFamilyForWeight(previewWeightKey)}", serif`,
+                      fontSize: `calc(clamp(126px, 19.5vw, 288px) + ${previewFontSizeOffset}px)`,
+                    }}
+                  />
+                </section>
+                <div className="session-review-actions session-review-actions-centered session-font-preview-actions">
+                  <button
+                    type="button"
+                    className="session-icon-button session-font-preview-action-button"
+                    onClick={() => adjustPreviewFontSize("smaller")}
+                    aria-label="Smaller"
+                  >
+                    <img src={smallerIcon} alt="" className="session-icon-image" />
+                  </button>
+                  <button
+                    type="button"
+                    className="session-icon-button session-font-preview-action-button"
+                    onClick={() => adjustPreviewFontSize("bigger")}
+                    aria-label="Bigger"
+                  >
+                    <img src={biggerIcon} alt="" className="session-icon-image" />
+                  </button>
+                  <div className="session-seed-control session-font-weight-control">
+                    <input
+                      type="text"
+                      className="session-letter-input session-font-weight-input"
+                      value={previewWeightLabel(previewWeightKey)}
+                      readOnly
+                      aria-label="Preview weight"
+                      tabIndex={-1}
+                    />
+                    <div className="session-letter-stepper">
+                      <button type="button" className="session-step-button" onClick={() => stepPreviewWeight("next")} aria-label="Heavier weight">
+                        <img src={letterUpIcon} alt="" className="session-step-icon" />
+                      </button>
+                      <button type="button" className="session-step-button" onClick={() => stepPreviewWeight("previous")} aria-label="Lighter weight">
+                        <img src={letterDownIcon} alt="" className="session-step-icon" />
+                      </button>
                     </div>
-                  </section>
-                  <div className="session-review-actions session-review-actions-centered">
-                    <div className="session-batch-slider" aria-label="X stroke weight">
-                      <input
-                        type="range"
-                        min={BATCH_SLIDER_MIN_RENDER_BRUSH_SIZE}
-                        max={BATCH_SLIDER_MAX_RENDER_BRUSH_SIZE}
-                        step={BATCH_RENDER_BRUSH_STEP}
-                        value={batchRenderBrushSize}
-                        onChange={(event) => setBatchRenderBrushSize(clampBatchSliderBrushSize(Number(event.target.value)))}
-                        className="session-batch-slider-input"
-                        aria-label="X stroke weight"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      className="session-icon-button"
-                      aria-label="Redo"
-                      onClick={postAlphabetRedoEvent}
-                    >
-                      <img src={redoIcon} alt="" className="session-icon-image" />
-                    </button>
-                    <button
-                      type="button"
-                      className="session-icon-button"
-                      aria-label="Confirm"
-                      onClick={postAlphabetConfirmedEvent}
-                    >
-                      <img src={approveIcon} alt="" className="session-icon-image" />
-                    </button>
                   </div>
-                </div>
-              ) : (
-                <div className="session-stage-stack session-stage-stack-wide session-font-preview-stage">
-                  <section className="session-review-frame session-font-preview-frame">
-                    <textarea
-                      ref={previewTextareaRef}
-                      className="session-font-preview-textarea"
-                      value={previewText}
-                      onChange={(event) => setPreviewText(event.target.value)}
-                      onBlur={(event) => {
-                        const textarea = event.currentTarget;
-                        const selectionStart = textarea.selectionStart ?? textarea.value.length;
-                        const selectionEnd = textarea.selectionEnd ?? selectionStart;
-                        window.requestAnimationFrame(() => {
-                          textarea.focus();
-                          textarea.setSelectionRange(selectionStart, selectionEnd);
-                        });
-                      }}
+                  <button
+                    type="button"
+                    className="session-font-download-chip session-font-preview-action-button"
+                    onClick={handleExportPartialFont}
+                    aria-label="Download Font"
+                    disabled={isDownloadingFont}
+                  >
+                    <span className="session-font-download-chip-label">{previewDownloadName}</span>
+                    <span
+                      className="session-font-download-chip-icon"
+                      aria-hidden="true"
                       style={{
-                        fontFamily: `"${previewFontFamilyForWeight(previewWeightKey)}", serif`,
-                        fontSize: `calc(clamp(126px, 19.5vw, 288px) + ${previewFontSizeOffset}px)`,
+                        WebkitMaskImage: `url(${downloadIcon})`,
+                        maskImage: `url(${downloadIcon})`,
                       }}
                     />
-                  </section>
-                  <div className="session-review-actions session-review-actions-centered session-font-preview-actions">
-                    <button
-                      type="button"
-                      className="session-icon-button session-font-preview-action-button"
-                      onClick={() => adjustPreviewFontSize("smaller")}
-                      aria-label="Smaller"
-                    >
-                      <img src={smallerIcon} alt="" className="session-icon-image" />
-                    </button>
-                    <button
-                      type="button"
-                      className="session-icon-button session-font-preview-action-button"
-                      onClick={() => adjustPreviewFontSize("bigger")}
-                      aria-label="Bigger"
-                    >
-                      <img src={biggerIcon} alt="" className="session-icon-image" />
-                    </button>
-                    <div className="session-seed-control session-font-weight-control">
-                      <input
-                        type="text"
-                        className="session-letter-input session-font-weight-input"
-                        value={previewWeightLabel(previewWeightKey)}
-                        readOnly
-                        aria-label="Preview weight"
-                        tabIndex={-1}
-                      />
-                      <div className="session-letter-stepper">
-                        <button type="button" className="session-step-button" onClick={() => stepPreviewWeight("next")} aria-label="Heavier weight">
-                          <img src={letterUpIcon} alt="" className="session-step-icon" />
-                        </button>
-                        <button type="button" className="session-step-button" onClick={() => stepPreviewWeight("previous")} aria-label="Lighter weight">
-                          <img src={letterDownIcon} alt="" className="session-step-icon" />
-                        </button>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="session-font-download-chip session-font-preview-action-button"
-                      onClick={handleExportPartialFont}
-                      aria-label="Download Font"
-                      disabled={isDownloadingFont}
-                    >
-                      <span className="session-font-download-chip-label">{previewDownloadName}</span>
-                      <span
-                        className="session-font-download-chip-icon"
-                        aria-hidden="true"
-                        style={{
-                          WebkitMaskImage: `url(${downloadIcon})`,
-                          maskImage: `url(${downloadIcon})`,
-                        }}
-                      />
-                    </button>
-                  </div>
+                  </button>
                 </div>
-              )}
+              </div>
+            </section>
+          ) : shouldRenderBatchGrid ? (
+            <section className="session-review-layout">
+              <div className="session-stage-stack session-stage-stack-wide">
+                <section className="session-review-frame session-batch-frame">
+                  {batchViewTabs}
+                  <div className="session-batch-grid">
+                    {(batchViewTab === "final"
+                      ? batchFinalGridItems
+                      : batchViewTab === "vector"
+                        ? batchVectorGridItems
+                        : batchGridItems).map((item) => (
+                      <div key={item.key} className="session-batch-cell">
+                        <button
+                          type="button"
+                          className={`session-batch-select${selectedBatchLetters.includes(item.character) ? " is-selected" : ""}${item.isPending ? " is-pending" : ""}`}
+                          aria-label={item.isPending ? `Revising ${item.character}` : `Select ${item.character}`}
+                          disabled={item.isPending}
+                          onClick={() => toggleBatchLetterSelection(item.character)}
+                        >
+                          <span className="session-batch-select-overlay" aria-hidden="true" />
+                        </button>
+                        {item.imageUrl && !item.isPending ? (
+                          <img className="session-batch-image" src={item.imageUrl} alt={item.alt} />
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+                <div className="session-review-actions session-review-actions-centered">
+                  <div className="session-batch-slider" aria-label="X stroke weight">
+                    <input
+                      type="range"
+                      min={BATCH_SLIDER_MIN_RENDER_BRUSH_SIZE}
+                      max={BATCH_SLIDER_MAX_RENDER_BRUSH_SIZE}
+                      step={BATCH_RENDER_BRUSH_STEP}
+                      value={batchRenderBrushSize}
+                      onChange={(event) => setBatchRenderBrushSize(clampBatchSliderBrushSize(Number(event.target.value)))}
+                      className="session-batch-slider-input"
+                      aria-label="X stroke weight"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="session-icon-button"
+                    aria-label="Redo"
+                    onClick={postAlphabetRedoEvent}
+                  >
+                    <img src={redoIcon} alt="" className="session-icon-image" />
+                  </button>
+                  <button
+                    type="button"
+                    className="session-icon-button"
+                    aria-label="Confirm"
+                    onClick={postAlphabetConfirmedEvent}
+                  >
+                    <img src={approveIcon} alt="" className="session-icon-image" />
+                  </button>
+                </div>
+              </div>
+            </section>
+          ) : shouldShowWorkingLoader ? (
+            <section className="session-loading-layout">
+              <div className="session-loading-pulse" role="status" aria-label="Loading" />
             </section>
           ) : isHydratingReviewRun ? (
             <section className="session-loading-layout">

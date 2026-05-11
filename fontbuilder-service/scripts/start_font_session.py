@@ -42,7 +42,7 @@ def main() -> int:
     print(
         f"I've opened up JumpFoundry in your browser:\n{session_url}\n\n"
         'Start by drawing two sample letters. I\'ll use them to build the rest of your font.\n\n'
-        'Go ahead and draw the first letter "E". Approve it when you\'re done.'
+        'Go ahead and draw the first letter "P". Approve it when you\'re done.'
     )
 
     if not args.no_open:
