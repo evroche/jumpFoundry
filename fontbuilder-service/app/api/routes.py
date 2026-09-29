@@ -81,7 +81,7 @@ def _build_session_response(session_id: str, session: dict, frontend_url: str | 
     return FontSessionResponse(
         session_id=session_id,
         backend_version=get_backend_version(),
-        frontend_url=frontend_url or f"http://127.0.0.1:5174/session/{session_id}",
+        frontend_url=frontend_url or session.get("frontend_url") or f"http://127.0.0.1:5174/session/{session_id}",
         status=session.get("status", "ready"),
         stage=session.get("stage", "draw"),
         instruction=session.get("instruction", ""),
@@ -256,9 +256,10 @@ async def get_punctuation_glyphs() -> PunctuationGlyphPreviewResponse:
 async def create_session(payload: FontSessionCreateRequest, response: Response) -> FontSessionResponse:
     _set_no_store(response)
     session_id = storage.create_session()
-    session = storage.read_session(session_id) or {}
     frontend_base_url = payload.frontend_base_url.rstrip("/")
-    return _build_session_response(session_id, session, f"{frontend_base_url}/session/{session_id}")
+    frontend_url = f"{frontend_base_url}/session/{session_id}"
+    session = storage.update_session(session_id, {"frontend_url": frontend_url}) or {}
+    return _build_session_response(session_id, session, frontend_url)
 
 
 @router.get("/api/v1/sessions/{session_id}", response_model=FontSessionResponse)
